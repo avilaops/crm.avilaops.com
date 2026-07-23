@@ -1,6 +1,6 @@
 # Agenda Contatos Web
 
-Agenda web privada para gestão de contatos comerciais, construída com React, TypeScript, Vite e Tailwind/shadcn-style UI.
+Frontend web privado para um CRM multi-tenant com WhatsApp, funil de vendas, inbox, automações e agenda como módulo auxiliar.
 
 Responsável técnico: Nícolas Ávila  
 Empresa: Ávila Ops Tecnologia  
@@ -8,14 +8,12 @@ Software privado.
 
 ## Funcionalidades
 
-- Cadastro, edição e exclusão de contatos.
-- Importação de contatos `.vcf` / vCard direto pelo navegador.
-- Deduplicação por email e por telefone normalizado.
-- Busca por nome, email, telefone, empresa e categoria.
-- Ação rápida de email via `mailto:`.
-- Ação rápida de WhatsApp via `wa.me`.
-- Persistência web temporária em `localStorage`.
-- Configuração base para integração WhatsApp OAuth2 com provedor de terceiros.
+- Funil de vendas em kanban.
+- Lista de leads.
+- Inbox de WhatsApp com contexto de cliente, espera e status.
+- Tarefas, chat em equipe, analytics, formulários, botão de chat e integrações.
+- Agenda de contatos como item auxiliar do CRM.
+- Base visual para integração WhatsApp OAuth2 e multi-tenant.
 
 ## Desenvolvimento web
 

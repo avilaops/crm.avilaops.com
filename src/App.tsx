@@ -1,66 +1,180 @@
 import {
+  Activity,
   AtSign,
+  BarChart3,
+  Bell,
+  Bot,
   CheckCircle2,
-  FileUp,
-  Mail,
+  Clock3,
+  Filter,
+  FormInput,
+  Inbox,
+  KanbanSquare,
+  Link2,
+  List,
   MessageCircle,
+  MessagesSquare,
+  MoreHorizontal,
   Plus,
-  Save,
   Search,
-  Trash2,
+  Send,
+  ShieldCheck,
+  Sparkles,
+  Target,
+  UsersRound,
 } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent } from 'react'
+import { useMemo, useState } from 'react'
 
-type Contact = {
+type View = 'pipeline' | 'list' | 'inbox' | 'tasks' | 'team' | 'analytics' | 'forms' | 'chat-button' | 'integrations' | 'agenda'
+
+type Lead = {
   id: string
   name: string
-  email: string
-  phone: string
   company: string
-  role: string
-  category: string
-  notes: string
-  createdAt: string
-  updatedAt: string
+  channel: 'WhatsApp' | 'Instagram' | 'Web' | 'Email'
+  value: number
+  stage: string
+  owner: string
+  status: 'Aguardando' | 'Em atendimento' | 'Sem resposta' | 'Arquivado'
+  waitingMinutes: number
+  lastMessage: string
+  tags: string[]
 }
 
-type ContactInput = Omit<Contact, 'id' | 'createdAt' | 'updatedAt'> & { id: string | null }
-
-type WhatsAppSettings = {
-  providerName: string
-  clientId: string
-  authorizationUrl: string
-  redirectUri: string
-  scope: string
-  connected: boolean
-  connectedAt: string | null
+type Conversation = {
+  id: string
+  customer: string
+  company: string
+  phone: string
+  owner: string
+  status: 'Novo' | 'Aberto' | 'Pendente' | 'Arquivado'
+  waitingMinutes: number
+  lastMessage: string
+  registered: boolean
 }
 
-const contactsStorageKey = 'agenda-contatos:web:contacts'
-const settingsStorageKey = 'agenda-contatos:web:whatsapp-settings'
+const stages = ['Leads de entrada', 'Decidindo', 'Discussão de contrato', 'Decisão final']
 
-const emptyContact: ContactInput = {
-  id: null,
-  name: '',
-  email: '',
-  phone: '',
-  company: '',
-  role: '',
-  category: 'Cliente',
-  notes: '',
+const leads: Lead[] = [
+  {
+    id: '1',
+    name: 'Mary Chan',
+    company: 'Avila Medical',
+    channel: 'WhatsApp',
+    value: 450,
+    stage: 'Leads de entrada',
+    owner: 'Nicolas',
+    status: 'Aguardando',
+    waitingMinutes: 42,
+    lastMessage: 'Sim. Pode me ligar hoje?',
+    tags: ['Urgente', 'Fácil'],
+  },
+  {
+    id: '2',
+    name: 'Ben Hurston',
+    company: 'Norte Solar',
+    channel: 'WhatsApp',
+    value: 2500,
+    stage: 'Leads de entrada',
+    owner: 'Amanda',
+    status: 'Sem resposta',
+    waitingMinutes: 128,
+    lastMessage: 'Quero entender os planos para equipe.',
+    tags: ['VIP'],
+  },
+  {
+    id: '3',
+    name: 'Lisa Runner',
+    company: 'RP Consultoria',
+    channel: 'Web',
+    value: 5000,
+    stage: 'Decidindo',
+    owner: 'Caio',
+    status: 'Em atendimento',
+    waitingMinutes: 8,
+    lastMessage: 'Enviei a proposta para análise.',
+    tags: ['Demo'],
+  },
+  {
+    id: '4',
+    name: 'Agnes Ruiz',
+    company: 'GLI Logística',
+    channel: 'Instagram',
+    value: 9000,
+    stage: 'Discussão de contrato',
+    owner: 'Nicolas',
+    status: 'Em atendimento',
+    waitingMinutes: 0,
+    lastMessage: 'Contrato revisado pelo financeiro.',
+    tags: ['Upsell'],
+  },
+  {
+    id: '5',
+    name: 'Aaron Mayers',
+    company: 'Oasis Piscinas',
+    channel: 'WhatsApp',
+    value: 3000,
+    stage: 'Decisão final',
+    owner: 'Amanda',
+    status: 'Aguardando',
+    waitingMinutes: 21,
+    lastMessage: 'Pode emitir a cobrança.',
+    tags: ['Fechamento'],
+  },
+]
+
+const conversations: Conversation[] = [
+  {
+    id: 'c1',
+    customer: 'Mary Kim',
+    company: 'Avila Medical',
+    phone: '+55 17 99660-0344',
+    owner: 'Nicolas',
+    status: 'Novo',
+    waitingMinutes: 42,
+    lastMessage: 'Sim. Pode me ligar?',
+    registered: true,
+  },
+  {
+    id: 'c2',
+    customer: 'John Harrison',
+    company: 'Lead sem cadastro',
+    phone: '+55 16 99220-4331',
+    owner: 'Sem responsável',
+    status: 'Aberto',
+    waitingMinutes: 13,
+    lastMessage: 'Oi, tenho uma pergunta sobre automação.',
+    registered: false,
+  },
+  {
+    id: 'c3',
+    customer: 'Soren Ember',
+    company: 'RP Consultoria',
+    phone: '+55 11 94399-1591',
+    owner: 'Amanda',
+    status: 'Pendente',
+    waitingMinutes: 185,
+    lastMessage: 'Você acha que poderia integrar com nosso CRM?',
+    registered: true,
+  },
+]
+
+const modules = [
+  { id: 'pipeline', label: 'Funil', icon: KanbanSquare },
+  { id: 'list', label: 'Lista', icon: List },
+  { id: 'inbox', label: 'Inbox', icon: Inbox },
+  { id: 'tasks', label: 'Tarefas', icon: CheckCircle2 },
+  { id: 'team', label: 'Chat equipe', icon: MessagesSquare },
+  { id: 'analytics', label: 'Analytics', icon: BarChart3 },
+  { id: 'forms', label: 'Formulários', icon: FormInput },
+  { id: 'chat-button', label: 'Botão chat', icon: Bot },
+  { id: 'integrations', label: 'Integrações', icon: Link2 },
+  { id: 'agenda', label: 'Agenda', icon: AtSign },
+] satisfies { id: View; label: string; icon: typeof KanbanSquare }[]
+
+function money(value: number) {
+  return value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 })
 }
-
-const defaultSettings: WhatsAppSettings = {
-  providerName: 'Provedor OAuth2',
-  clientId: '',
-  authorizationUrl: '',
-  redirectUri: `${window.location.origin}/auth/whatsapp/callback`,
-  scope: 'whatsapp_business_messaging whatsapp_business_management',
-  connected: false,
-  connectedAt: null,
-}
-
-const categories = ['Cliente', 'Fornecedor', 'Parceiro', 'Lead', 'Interno', 'Importado']
 
 function initials(name: string) {
   return name
@@ -71,416 +185,430 @@ function initials(name: string) {
     .join('')
 }
 
-function normalizePhone(value: string) {
-  return value.replace(/\D/g, '')
-}
-
-function decodeVcardValue(value: string) {
-  return value
-    .replace(/\\n/gi, '\n')
-    .replace(/\\,/g, ',')
-    .replace(/\\;/g, ';')
-    .replace(/\\\\/g, '\\')
-    .trim()
-}
-
-function unfoldVcardLines(content: string) {
-  const lines: string[] = []
-  for (const rawLine of content.split(/\r?\n/)) {
-    if (/^[ \t]/.test(rawLine) && lines.length > 0) {
-      lines[lines.length - 1] += rawLine.trimStart()
-    } else {
-      lines.push(rawLine)
-    }
-  }
-  return lines
-}
-
-function nameFromStructured(value: string) {
-  const [family = '', given = ''] = value.split(';')
-  return `${given.trim()} ${family.trim()}`.trim() || value.replace(/;/g, ' ').trim()
-}
-
-function parseVcf(content: string): ContactInput[] {
-  const contacts: ContactInput[] = []
-  let current: ContactInput | null = null
-
-  for (const line of unfoldVcardLines(content)) {
-    const upper = line.trim().toUpperCase()
-    if (upper === 'BEGIN:VCARD') {
-      current = { ...emptyContact, category: 'Importado' }
-      continue
-    }
-    if (upper === 'END:VCARD') {
-      if (current) contacts.push(current)
-      current = null
-      continue
-    }
-    if (!current || !line.includes(':')) continue
-
-    const [rawKey, ...valueParts] = line.split(':')
-    const key = rawKey.split(';')[0].trim().toUpperCase()
-    const value = decodeVcardValue(valueParts.join(':'))
-
-    if (key === 'FN' && !current.name) current.name = value
-    if (key === 'N' && !current.name) current.name = nameFromStructured(value)
-    if (key === 'EMAIL' && !current.email) current.email = value
-    if (key === 'TEL' && !current.phone) current.phone = value
-    if (key === 'ORG' && !current.company) current.company = value.replace(/;/g, ' ')
-    if (key === 'TITLE' && !current.role) current.role = value
-    if (key === 'NOTE' && !current.notes) current.notes = value
+function ChannelBadge({ channel }: { channel: Lead['channel'] }) {
+  const colors = {
+    WhatsApp: 'bg-emerald-100 text-emerald-700',
+    Instagram: 'bg-pink-100 text-pink-700',
+    Web: 'bg-blue-100 text-blue-700',
+    Email: 'bg-amber-100 text-amber-700',
   }
 
-  return contacts
-}
-
-function sortContacts(contacts: Contact[]) {
-  return [...contacts].sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'))
+  return <span className={`rounded px-1.5 py-0.5 text-[11px] font-medium ${colors[channel]}`}>{channel}</span>
 }
 
 function App() {
-  const fileInputRef = useRef<HTMLInputElement>(null)
-  const [contacts, setContacts] = useState<Contact[]>([])
-  const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [draft, setDraft] = useState<ContactInput>(emptyContact)
-  const [query, setQuery] = useState('')
-  const [status, setStatus] = useState('Carregando agenda...')
-  const [settings, setSettings] = useState<WhatsAppSettings>(defaultSettings)
+  const [view, setView] = useState<View>('pipeline')
+  const [selectedConversation, setSelectedConversation] = useState(conversations[0])
+  const [search, setSearch] = useState('')
 
-  useEffect(() => {
-    const savedContacts = JSON.parse(localStorage.getItem(contactsStorageKey) || '[]') as Contact[]
-    const savedSettings = JSON.parse(
-      localStorage.getItem(settingsStorageKey) || JSON.stringify(defaultSettings),
-    ) as WhatsAppSettings
-    setContacts(sortContacts(savedContacts))
-    setSettings({ ...defaultSettings, ...savedSettings })
-    setStatus(`${savedContacts.length} contatos na agenda`)
-  }, [])
+  const filteredLeads = useMemo(() => {
+    const term = search.toLowerCase().trim()
+    if (!term) return leads
+    return leads.filter((lead) => [lead.name, lead.company, lead.owner, lead.channel].join(' ').toLowerCase().includes(term))
+  }, [search])
 
-  useEffect(() => {
-    localStorage.setItem(contactsStorageKey, JSON.stringify(contacts))
-  }, [contacts])
-
-  useEffect(() => {
-    localStorage.setItem(settingsStorageKey, JSON.stringify(settings))
-  }, [settings])
-
-  const filteredContacts = useMemo(() => {
-    const term = query.trim().toLowerCase()
-    if (!term) return contacts
-    return contacts.filter((contact) =>
-      [contact.name, contact.email, contact.phone, contact.company, contact.category]
-        .join(' ')
-        .toLowerCase()
-        .includes(term),
-    )
-  }, [contacts, query])
-
-  const selectedContact = contacts.find((contact) => contact.id === selectedId)
-
-  function selectContact(contact: Contact) {
-    setSelectedId(contact.id)
-    setDraft({ ...contact, id: contact.id })
-  }
-
-  function newContact() {
-    setSelectedId(null)
-    setDraft(emptyContact)
-  }
-
-  function saveContact(event: FormEvent) {
-    event.preventDefault()
-    if (!draft.name.trim()) {
-      setStatus('Informe o nome do contato')
-      return
-    }
-    if (!draft.email.trim() && !draft.phone.trim()) {
-      setStatus('Informe email ou telefone')
-      return
-    }
-
-    const now = new Date().toISOString()
-    const saved: Contact = {
-      ...draft,
-      id: draft.id || `contact-${Date.now()}`,
-      name: draft.name.trim(),
-      email: draft.email.trim().toLowerCase(),
-      phone: draft.phone.trim(),
-      company: draft.company.trim(),
-      role: draft.role.trim(),
-      category: draft.category,
-      notes: draft.notes.trim(),
-      createdAt: now,
-      updatedAt: now,
-    }
-
-    setContacts((current) =>
-      sortContacts(
-        current.some((contact) => contact.id === saved.id)
-          ? current.map((contact) => (contact.id === saved.id ? saved : contact))
-          : [...current, saved],
-      ),
-    )
-    setSelectedId(saved.id)
-    setDraft({ ...saved, id: saved.id })
-    setStatus(`Contato salvo: ${saved.name}`)
-  }
-
-  function deleteSelected() {
-    if (!selectedId) return
-    setContacts((current) => current.filter((contact) => contact.id !== selectedId))
-    newContact()
-    setStatus('Contato removido')
-  }
-
-  async function importVcf(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0]
-    if (!file) return
-
-    const content = await file.text()
-    const existingEmails = new Set(contacts.map((contact) => contact.email).filter(Boolean))
-    const existingPhones = new Set(contacts.map((contact) => normalizePhone(contact.phone)).filter(Boolean))
-    let imported = 0
-    let skipped = 0
-
-    const importedContacts = parseVcf(content).flatMap((input) => {
-      if (!input.name.trim() || (!input.email.trim() && !input.phone.trim())) {
-        skipped += 1
-        return []
-      }
-
-      const email = input.email.trim().toLowerCase()
-      const phone = normalizePhone(input.phone)
-      if ((email && existingEmails.has(email)) || (phone && existingPhones.has(phone))) {
-        skipped += 1
-        return []
-      }
-
-      const now = new Date().toISOString()
-      imported += 1
-      if (email) existingEmails.add(email)
-      if (phone) existingPhones.add(phone)
-      return [{
-        ...input,
-        id: `contact-${Date.now()}-${imported}`,
-        email,
-        createdAt: now,
-        updatedAt: now,
-      }]
-    })
-
-    setContacts((current) => sortContacts([...current, ...importedContacts]))
-    setSelectedId(null)
-    setDraft(emptyContact)
-    setStatus(`${imported} contatos importados, ${skipped} ignorados`)
-    event.target.value = ''
-  }
-
-  function sendEmail(contact: Contact) {
-    window.location.href = `mailto:${contact.email}?subject=${encodeURIComponent(
-      'Contato via Agenda Ávila Ops',
-    )}`
-  }
-
-  function openWhatsApp(contact: Contact) {
-    const phone = normalizePhone(contact.phone)
-    const text = encodeURIComponent(`Olá ${contact.name}, tudo bem?`)
-    window.open(`https://wa.me/${phone}?text=${text}`, '_blank')
-  }
-
-  function connectWhatsApp() {
-    if (!settings.authorizationUrl.trim() || !settings.clientId.trim()) {
-      setStatus('Configure a URL de autorização e o Client ID do provedor')
-      return
-    }
-    const separator = settings.authorizationUrl.includes('?') ? '&' : '?'
-    const url = `${settings.authorizationUrl}${separator}client_id=${encodeURIComponent(
-      settings.clientId,
-    )}&redirect_uri=${encodeURIComponent(settings.redirectUri)}&response_type=code&scope=${encodeURIComponent(
-      settings.scope,
-    )}`
-    window.open(url, '_blank')
-    setSettings({ ...settings, connected: true, connectedAt: new Date().toISOString() })
-    setStatus('Fluxo OAuth2 iniciado')
-  }
+  const totalPipeline = leads.reduce((sum, lead) => sum + lead.value, 0)
+  const waitingCount = conversations.filter((conversation) => conversation.status !== 'Arquivado' && conversation.waitingMinutes > 15).length
 
   return (
-    <main className="min-h-screen bg-slate-50 text-slate-950">
-      <div className="grid min-h-screen lg:grid-cols-[240px_minmax(0,1fr)] 2xl:grid-cols-[260px_minmax(0,1fr)_340px]">
-        <aside className="border-r border-slate-200 bg-white">
-          <div className="border-b border-slate-200 p-5">
-            <div className="flex items-center gap-3">
-              <div className="grid h-10 w-10 place-items-center rounded-md bg-emerald-600 text-white">
-                <AtSign size={20} />
-              </div>
-              <div className="min-w-0">
-                <h1 className="truncate text-lg font-semibold">Agenda Contatos</h1>
-                <p className="truncate text-sm text-slate-500">Ávila Ops Tecnologia</p>
-              </div>
+    <main className="min-h-screen bg-[#f4f1ff] text-slate-950">
+      <div className="grid min-h-screen lg:grid-cols-[232px_minmax(0,1fr)]">
+        <aside className="border-r border-slate-200 bg-slate-950 text-white">
+          <div className="flex items-center gap-3 border-b border-white/10 px-5 py-5">
+            <div className="grid h-10 w-10 place-items-center rounded-md bg-emerald-500">
+              <AtSign size={20} />
             </div>
-            <button className="mt-5 w-full rounded-md bg-slate-950 px-3 py-2 text-sm font-medium text-white" onClick={newContact}>
-              <Plus className="mr-2 inline" size={16} />
-              Novo contato
-            </button>
-            <button className="mt-2 w-full rounded-md border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50" onClick={() => fileInputRef.current?.click()}>
-              <FileUp className="mr-2 inline" size={16} />
-              Importar VCF
-            </button>
-            <input ref={fileInputRef} className="hidden" type="file" accept=".vcf,.vcard,text/vcard" onChange={importVcf} />
+            <div>
+              <h1 className="text-base font-semibold">Agenda CRM</h1>
+              <p className="text-xs text-slate-400">WhatsApp para equipes</p>
+            </div>
           </div>
-
-          <nav className="space-y-1 p-3 text-sm">
-            {categories.map((category) => (
-              <button key={category} className="flex w-full items-center justify-between rounded-md px-3 py-2 text-left hover:bg-slate-100">
-                <span>{category}</span>
-                <span className="text-slate-400">{contacts.filter((contact) => contact.category === category).length}</span>
-              </button>
-            ))}
+          <nav className="space-y-1 p-3">
+            {modules.map((item) => {
+              const Icon = item.icon
+              return (
+                <button
+                  key={item.id}
+                  className={`flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-left text-sm ${
+                    view === item.id ? 'bg-white text-slate-950' : 'text-slate-300 hover:bg-white/10 hover:text-white'
+                  }`}
+                  onClick={() => setView(item.id)}
+                >
+                  <Icon size={17} />
+                  {item.label}
+                </button>
+              )
+            })}
           </nav>
+          <div className="mx-3 mt-4 rounded-md bg-white/8 p-3 text-xs text-slate-300">
+            <div className="mb-2 flex items-center gap-2 font-semibold text-white">
+              <ShieldCheck size={15} />
+              Multi-tenant
+            </div>
+            Empresas, números, equipes e permissões separados por organização.
+          </div>
         </aside>
 
-        <section className="flex min-w-0 flex-col">
-          <header className="border-b border-slate-200 bg-white px-6 py-4">
+        <section className="min-w-0">
+          <header className="sticky top-0 z-10 border-b border-slate-200 bg-white/95 px-5 py-4 backdrop-blur">
             <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-              <div className="min-w-0">
-                <h2 className="text-xl font-semibold">Contatos</h2>
-                <p className="text-sm text-slate-500">{status}</p>
+              <div>
+                <h2 className="text-xl font-semibold">{modules.find((item) => item.id === view)?.label}</h2>
+                <p className="text-sm text-slate-500">Controle funil, inbox, equipe e WhatsApp em uma operação compartilhada.</p>
               </div>
-              <div className="relative w-full xl:w-80">
-                <Search className="absolute left-3 top-2.5 text-slate-400" size={17} />
-                <input
-                  className="w-full rounded-md border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm outline-none focus:border-emerald-600"
-                  placeholder="Buscar nome, email, empresa..."
-                  value={query}
-                  onChange={(event) => setQuery(event.target.value)}
-                />
+              <div className="flex flex-wrap gap-2">
+                <div className="relative w-full sm:w-80">
+                  <Search className="absolute left-3 top-2.5 text-slate-400" size={17} />
+                  <input
+                    className="w-full rounded-md border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm outline-none focus:border-blue-500"
+                    placeholder="Buscar e filtrar"
+                    value={search}
+                    onChange={(event) => setSearch(event.target.value)}
+                  />
+                </div>
+                <button className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-medium">
+                  <Filter className="mr-2 inline" size={16} />
+                  Filtro
+                </button>
+                <button className="rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white">
+                  <Plus className="mr-2 inline" size={16} />
+                  Novo lead
+                </button>
               </div>
             </div>
           </header>
 
-          <div className="grid min-w-0 gap-5 overflow-auto p-5 xl:grid-cols-[minmax(0,1fr)_300px]">
-            <div className="overflow-hidden rounded-md border border-slate-200 bg-white">
-              <div className="flex items-center justify-between gap-3 border-b border-slate-200 bg-slate-100 px-4 py-3 text-xs font-semibold uppercase text-slate-500">
-                <span>Contato</span>
-                <span>Categoria</span>
-              </div>
-              {filteredContacts.map((contact) => (
-                <button
-                  key={contact.id}
-                  className={`flex w-full min-w-0 items-center gap-3 border-b border-slate-100 px-4 py-3 text-left text-sm hover:bg-emerald-50 ${
-                    selectedId === contact.id ? 'bg-emerald-50' : ''
-                  }`}
-                  onClick={() => selectContact(contact)}
-                >
-                  <span className="grid h-9 w-9 shrink-0 place-items-center rounded-md bg-slate-200 text-xs font-semibold">
-                    {initials(contact.name)}
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate font-medium">{contact.name}</span>
-                    <span className="mt-0.5 flex min-w-0 flex-wrap gap-x-3 gap-y-1 text-xs text-slate-500">
-                      <span className="max-w-full truncate">{contact.email || 'Sem email'}</span>
-                      <span className="max-w-full truncate">{contact.phone || 'Sem telefone'}</span>
-                      {(contact.company || contact.role) && (
-                        <span className="max-w-full truncate">{contact.company || contact.role}</span>
-                      )}
-                    </span>
-                  </span>
-                  <span className="shrink-0 rounded-md bg-slate-100 px-2 py-1 text-xs text-slate-600">
-                    {contact.category}
-                  </span>
-                </button>
-              ))}
-              {filteredContacts.length === 0 && (
-                <div className="grid place-items-center px-4 py-16 text-sm text-slate-500">Nenhum contato encontrado</div>
-              )}
+          <div className="p-5">
+            <div className="mb-5 grid gap-3 md:grid-cols-4">
+              <Metric title="Leads ativos" value={`${leads.length}`} icon={Target} tone="blue" />
+              <Metric title="Pipeline" value={money(totalPipeline)} icon={Activity} tone="emerald" />
+              <Metric title="Clientes esperando" value={`${waitingCount}`} icon={Clock3} tone="amber" />
+              <Metric title="Números conectados" value="3" icon={MessageCircle} tone="violet" />
             </div>
 
-            <div className="rounded-md border border-slate-200 bg-white p-4">
-              <h3 className="mb-3 text-sm font-semibold">Ações rápidas</h3>
-              {selectedContact ? (
-                <div className="space-y-2">
-                  <button className="w-full rounded-md border border-slate-200 px-3 py-2 text-left text-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40" disabled={!selectedContact.email} onClick={() => sendEmail(selectedContact)}>
-                    <Mail className="mr-2 inline" size={16} />
-                    Enviar email
-                  </button>
-                  <button className="w-full rounded-md border border-slate-200 px-3 py-2 text-left text-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40" disabled={!selectedContact.phone} onClick={() => openWhatsApp(selectedContact)}>
-                    <MessageCircle className="mr-2 inline" size={16} />
-                    Abrir WhatsApp
-                  </button>
-                </div>
-              ) : (
-                <p className="text-sm text-slate-500">Selecione um contato para usar email e WhatsApp.</p>
-              )}
-
-              <div className="mt-6 border-t border-slate-200 pt-4">
-                <h3 className="mb-3 text-sm font-semibold">WhatsApp OAuth2</h3>
-                <div className="space-y-3">
-                  <input className="input" placeholder="Nome do provedor" value={settings.providerName} onChange={(event) => setSettings({ ...settings, providerName: event.target.value })} />
-                  <input className="input" placeholder="Client ID" value={settings.clientId} onChange={(event) => setSettings({ ...settings, clientId: event.target.value })} />
-                  <input className="input" placeholder="URL de autorização" value={settings.authorizationUrl} onChange={(event) => setSettings({ ...settings, authorizationUrl: event.target.value })} />
-                  <button className="w-full rounded-md bg-emerald-600 px-3 py-2 text-sm font-medium text-white" onClick={connectWhatsApp}>
-                    <CheckCircle2 className="mr-2 inline" size={16} />
-                    {settings.connected ? 'Reconectar OAuth2' : 'Conectar OAuth2'}
-                  </button>
-                </div>
-              </div>
-            </div>
+            {view === 'pipeline' && <Pipeline leads={filteredLeads} />}
+            {view === 'list' && <LeadList leads={filteredLeads} />}
+            {view === 'inbox' && (
+              <InboxView
+                conversations={conversations}
+                selectedConversation={selectedConversation}
+                setSelectedConversation={setSelectedConversation}
+              />
+            )}
+            {view === 'tasks' && <FeatureGrid kind="tasks" />}
+            {view === 'team' && <FeatureGrid kind="team" />}
+            {view === 'analytics' && <Analytics />}
+            {view === 'forms' && <Builder title="Formulário web" icon={FormInput} />}
+            {view === 'chat-button' && <Builder title="Botão de chat multi-mensageiros" icon={Bot} />}
+            {view === 'integrations' && <Integrations />}
+            {view === 'agenda' && <AgendaModule />}
           </div>
         </section>
-
-        <aside className="border-l border-slate-200 bg-white lg:col-span-2 2xl:col-span-1">
-          <form className="flex h-full flex-col" onSubmit={saveContact}>
-            <div className="border-b border-slate-200 p-5">
-              <h2 className="text-lg font-semibold">{draft.id ? 'Editar contato' : 'Novo contato'}</h2>
-              <p className="text-sm text-slate-500">Dados comerciais e canais de contato</p>
-            </div>
-            <div className="grid gap-4 overflow-auto p-5 md:grid-cols-2 2xl:block 2xl:space-y-4">
-              <label className="field">
-                <span>Nome</span>
-                <input className="input" value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} required />
-              </label>
-              <label className="field">
-                <span>Email</span>
-                <input className="input" type="email" value={draft.email} onChange={(event) => setDraft({ ...draft, email: event.target.value })} />
-              </label>
-              <label className="field">
-                <span>Telefone / WhatsApp</span>
-                <input className="input" value={draft.phone} onChange={(event) => setDraft({ ...draft, phone: event.target.value })} />
-              </label>
-              <label className="field">
-                <span>Empresa</span>
-                <input className="input" value={draft.company} onChange={(event) => setDraft({ ...draft, company: event.target.value })} />
-              </label>
-              <label className="field">
-                <span>Cargo</span>
-                <input className="input" value={draft.role} onChange={(event) => setDraft({ ...draft, role: event.target.value })} />
-              </label>
-              <label className="field">
-                <span>Categoria</span>
-                <select className="input" value={draft.category} onChange={(event) => setDraft({ ...draft, category: event.target.value })}>
-                  {categories.map((category) => (
-                    <option key={category}>{category}</option>
-                  ))}
-                </select>
-              </label>
-              <label className="field md:col-span-2 2xl:col-span-1">
-                <span>Observações</span>
-                <textarea className="input min-h-28 resize-none" value={draft.notes} onChange={(event) => setDraft({ ...draft, notes: event.target.value })} />
-              </label>
-            </div>
-            <div className="flex gap-2 border-t border-slate-200 p-5">
-              <button className="flex-1 rounded-md bg-slate-950 px-3 py-2 text-sm font-medium text-white" type="submit">
-                <Save className="mr-2 inline" size={16} />
-                Salvar
-              </button>
-              <button className="rounded-md border border-red-200 px-3 py-2 text-red-700 disabled:opacity-40" type="button" disabled={!selectedId} onClick={deleteSelected}>
-                <Trash2 size={16} />
-              </button>
-            </div>
-          </form>
-        </aside>
       </div>
     </main>
+  )
+}
+
+function Metric({ title, value, icon: Icon, tone }: { title: string; value: string; icon: typeof Activity; tone: string }) {
+  const tones: Record<string, string> = {
+    blue: 'bg-blue-50 text-blue-700',
+    emerald: 'bg-emerald-50 text-emerald-700',
+    amber: 'bg-amber-50 text-amber-700',
+    violet: 'bg-violet-50 text-violet-700',
+  }
+
+  return (
+    <div className="rounded-md border border-slate-200 bg-white p-4">
+      <div className="flex items-center justify-between">
+        <span className="text-sm text-slate-500">{title}</span>
+        <span className={`grid h-8 w-8 place-items-center rounded-md ${tones[tone]}`}>
+          <Icon size={17} />
+        </span>
+      </div>
+      <div className="mt-3 text-2xl font-semibold">{value}</div>
+    </div>
+  )
+}
+
+function Pipeline({ leads }: { leads: Lead[] }) {
+  return (
+    <div className="overflow-x-auto rounded-md border border-slate-200 bg-white p-4">
+      <div className="grid min-w-[1040px] grid-cols-4 gap-4">
+        {stages.map((stage, index) => (
+          <div key={stage} className="min-h-[520px]">
+            <div className="mb-3 border-b-4 pb-2 text-center text-sm font-bold uppercase tracking-[0.16em]" style={{ borderColor: ['#facc15', '#a855f7', '#7dd957', '#3b82f6'][index] }}>
+              {stage}
+            </div>
+            <div className="space-y-3">
+              {leads.filter((lead) => lead.stage === stage).map((lead) => (
+                <LeadCard key={lead.id} lead={lead} />
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function LeadCard({ lead }: { lead: Lead }) {
+  return (
+    <div className="rounded-md border border-slate-200 bg-white p-3 shadow-sm">
+      <div className="flex items-start gap-3">
+        <div className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-slate-200 text-xs font-semibold">{initials(lead.name)}</div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center justify-between gap-2">
+            <p className="truncate text-sm font-semibold">{lead.name}</p>
+            <span className="text-xs text-slate-400">{lead.waitingMinutes ? `${lead.waitingMinutes}m` : 'agora'}</span>
+          </div>
+          <p className="truncate text-sm font-medium text-blue-700">{lead.company}</p>
+          <div className="mt-2 flex flex-wrap items-center gap-1.5">
+            <ChannelBadge channel={lead.channel} />
+            {lead.tags.map((tag) => (
+              <span key={tag} className="rounded border border-slate-200 px-1.5 py-0.5 text-[11px] text-slate-500">{tag}</span>
+            ))}
+          </div>
+          <div className="mt-2 flex items-center justify-between text-xs text-slate-500">
+            <span>{money(lead.value)}</span>
+            <span>{lead.status}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function LeadList({ leads }: { leads: Lead[] }) {
+  return (
+    <div className="overflow-hidden rounded-md border border-slate-200 bg-white">
+      {leads.map((lead) => (
+        <div key={lead.id} className="grid gap-3 border-b border-slate-100 p-4 text-sm md:grid-cols-[1.4fr_1fr_120px_140px_120px] md:items-center">
+          <div className="min-w-0">
+            <p className="truncate font-semibold">{lead.name}</p>
+            <p className="truncate text-slate-500">{lead.company}</p>
+          </div>
+          <p className="truncate text-slate-600">{lead.lastMessage}</p>
+          <ChannelBadge channel={lead.channel} />
+          <span className="text-slate-600">{lead.owner}</span>
+          <span className="font-semibold">{money(lead.value)}</span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function InboxView({
+  conversations,
+  selectedConversation,
+  setSelectedConversation,
+}: {
+  conversations: Conversation[]
+  selectedConversation: Conversation
+  setSelectedConversation: (conversation: Conversation) => void
+}) {
+  return (
+    <div className="grid min-h-[620px] overflow-hidden rounded-md border border-slate-200 bg-white xl:grid-cols-[340px_minmax(0,1fr)_300px]">
+      <div className="border-r border-slate-200">
+        <div className="border-b border-slate-200 p-4">
+          <div className="flex items-center justify-between">
+            <h3 className="font-semibold">Caixa de entrada</h3>
+            <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-semibold text-blue-700">180</span>
+          </div>
+        </div>
+        {conversations.map((conversation) => (
+          <button
+            key={conversation.id}
+            className={`flex w-full gap-3 border-b border-slate-100 p-4 text-left hover:bg-slate-50 ${
+              selectedConversation.id === conversation.id ? 'bg-blue-50' : ''
+            }`}
+            onClick={() => setSelectedConversation(conversation)}
+          >
+            <div className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-slate-200 text-xs font-semibold">{initials(conversation.customer)}</div>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center justify-between gap-2">
+                <p className="truncate text-sm font-semibold">{conversation.customer}</p>
+                <span className="text-xs text-slate-400">{conversation.waitingMinutes}m</span>
+              </div>
+              <p className="truncate text-sm text-slate-500">{conversation.lastMessage}</p>
+            </div>
+          </button>
+        ))}
+      </div>
+
+      <div className="flex min-w-0 flex-col">
+        <div className="flex items-center justify-between border-b border-slate-200 p-4">
+          <div>
+            <h3 className="font-semibold">{selectedConversation.customer}</h3>
+            <p className="text-sm text-slate-500">{selectedConversation.phone}</p>
+          </div>
+          <button className="rounded-md border border-slate-200 px-3 py-2 text-sm">
+            <MoreHorizontal size={16} />
+          </button>
+        </div>
+        <div className="flex-1 space-y-4 bg-slate-50 p-5">
+          <Bubble side="left" text={selectedConversation.lastMessage} />
+          <Bubble side="right" text="Olá! Já estou verificando para te responder com precisão." />
+          <Bubble side="left" text="Perfeito, fico no aguardo." />
+        </div>
+        <div className="border-t border-slate-200 p-4">
+          <div className="rounded-md border border-slate-200 bg-white p-3">
+            <textarea className="min-h-20 w-full resize-none outline-none" placeholder="Responder no WhatsApp..." />
+            <div className="mt-2 flex items-center justify-between">
+              <button className="text-sm text-blue-700">/modelos</button>
+              <button className="rounded-md bg-slate-950 px-3 py-2 text-sm font-medium text-white">
+                <Send className="mr-2 inline" size={15} />
+                Enviar
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="border-l border-slate-200 p-4">
+        <h3 className="font-semibold">Contexto do cliente</h3>
+        <div className="mt-4 space-y-3 text-sm">
+          <Info label="Cadastro" value={selectedConversation.registered ? 'Cliente cadastrado' : 'Lead sem cadastro'} />
+          <Info label="Responsável" value={selectedConversation.owner} />
+          <Info label="Status" value={selectedConversation.status} />
+          <Info label="Tempo sem resposta" value={`${selectedConversation.waitingMinutes} minutos`} />
+        </div>
+        <button className="mt-5 w-full rounded-md bg-emerald-600 px-3 py-2 text-sm font-medium text-white">Criar tarefa</button>
+        <button className="mt-2 w-full rounded-md border border-slate-200 px-3 py-2 text-sm font-medium">Arquivar conversa</button>
+      </div>
+    </div>
+  )
+}
+
+function Bubble({ side, text }: { side: 'left' | 'right'; text: string }) {
+  return (
+    <div className={`flex ${side === 'right' ? 'justify-end' : 'justify-start'}`}>
+      <div className={`max-w-[70%] rounded-md px-4 py-3 text-sm shadow-sm ${side === 'right' ? 'bg-blue-600 text-white' : 'bg-white'}`}>{text}</div>
+    </div>
+  )
+}
+
+function Info({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-md border border-slate-200 p-3">
+      <p className="text-xs uppercase text-slate-400">{label}</p>
+      <p className="mt-1 font-medium">{value}</p>
+    </div>
+  )
+}
+
+function FeatureGrid({ kind }: { kind: 'tasks' | 'team' }) {
+  const items = kind === 'tasks'
+    ? [
+        ['Lembretes por cliente', 'Crie follow-ups em perfis de clientes e acompanhe atrasos.'],
+        ['Agenda da equipe', 'Veja tarefas por responsável, prioridade e vencimento.'],
+        ['Automação no funil', 'Ao mover etapa, dispare tarefas, mensagens ou tags.'],
+      ]
+    : [
+        ['Chat privado', 'Converse com colegas sem sair do atendimento.'],
+        ['Grupos por equipe', 'Crie salas para vendas, suporte e financeiro.'],
+        ['Menções em clientes', 'Chame um colega dentro do perfil do cliente.'],
+      ]
+  return (
+    <div className="grid gap-4 md:grid-cols-3">
+      {items.map(([title, body]) => (
+        <div key={title} className="rounded-md border border-slate-200 bg-white p-5">
+          <Bell className="mb-4 text-blue-600" />
+          <h3 className="font-semibold">{title}</h3>
+          <p className="mt-2 text-sm text-slate-500">{body}</p>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function Analytics() {
+  return (
+    <div className="grid gap-5 xl:grid-cols-[1fr_320px]">
+      <div className="rounded-md border border-slate-200 bg-white p-5">
+        <h3 className="font-semibold">Performance em tempo real</h3>
+        <div className="mt-6 flex h-72 items-end gap-3">
+          {[44, 62, 38, 76, 58, 92, 67, 84].map((height, index) => (
+            <div key={height + index} className="flex flex-1 flex-col items-center gap-2">
+              <div className="w-full rounded-t bg-blue-500" style={{ height: `${height}%` }} />
+              <span className="text-xs text-slate-400">{index + 1}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+      <div className="space-y-3">
+        <Info label="Tempo médio primeira resposta" value="7m 42s" />
+        <Info label="Conversas resolvidas hoje" value="68" />
+        <Info label="SLA violado" value="5 conversas" />
+      </div>
+    </div>
+  )
+}
+
+function Builder({ title, icon: Icon }: { title: string; icon: typeof FormInput }) {
+  return (
+    <div className="grid gap-5 xl:grid-cols-[360px_minmax(0,1fr)]">
+      <div className="rounded-md border border-slate-200 bg-white p-5">
+        <Icon className="mb-4 text-blue-600" />
+        <h3 className="text-lg font-semibold">{title}</h3>
+        <p className="mt-2 text-sm text-slate-500">Configure campos, origem, tags automáticas e destino no funil de vendas.</p>
+        <div className="mt-5 space-y-3">
+          <input className="input" placeholder="Nome da campanha" />
+          <input className="input" placeholder="Etapa destino do funil" />
+          <button className="w-full rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white">Salvar configuração</button>
+        </div>
+      </div>
+      <div className="rounded-md border border-slate-200 bg-white p-5">
+        <div className="rounded-md border-2 border-dashed border-slate-200 p-8">
+          <p className="text-sm font-semibold">Prévia</p>
+          <div className="mt-4 rounded-md bg-slate-50 p-5">
+            <input className="input mb-3" placeholder="Nome" />
+            <input className="input mb-3" placeholder="WhatsApp" />
+            <button className="rounded-md bg-emerald-600 px-3 py-2 text-sm font-medium text-white">Conversar agora</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function Integrations() {
+  const apps = ['WhatsApp Cloud API', 'Instagram Direct', 'Google Sheets', 'HubSpot', 'Zapier', 'Webhooks']
+  return (
+    <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+      {apps.map((app) => (
+        <div key={app} className="rounded-md border border-slate-200 bg-white p-5">
+          <div className="mb-4 flex items-center justify-between">
+            <Sparkles className="text-blue-600" />
+            <span className="rounded bg-slate-100 px-2 py-1 text-xs text-slate-500">Pronto para conectar</span>
+          </div>
+          <h3 className="font-semibold">{app}</h3>
+          <p className="mt-2 text-sm text-slate-500">Conecte eventos, contatos, mensagens e automações ao fluxo da equipe.</p>
+          <button className="mt-4 rounded-md border border-slate-200 px-3 py-2 text-sm font-medium">Configurar</button>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function AgendaModule() {
+  return (
+    <div className="rounded-md border border-slate-200 bg-white p-5">
+      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div>
+          <h3 className="text-lg font-semibold">Agenda de contatos</h3>
+          <p className="text-sm text-slate-500">Agora a agenda é um módulo auxiliar do CRM, ligado a leads, conversas e empresas.</p>
+        </div>
+        <button className="rounded-md bg-slate-950 px-3 py-2 text-sm font-medium text-white">
+          <UsersRound className="mr-2 inline" size={16} />
+          Importar contatos
+        </button>
+      </div>
+      <div className="mt-5 grid gap-3 md:grid-cols-3">
+        <Info label="Contatos vinculados" value="4.309" />
+        <Info label="Sem cadastro completo" value="1.577" />
+        <Info label="Duplicados bloqueados" value="1.379" />
+      </div>
+    </div>
   )
 }
 
