@@ -625,7 +625,12 @@ function SettingsBilling() {
     ['Perfil', 'Configurações de perfil'],
     ['Área de trabalho', 'Configurações de trabalho', 'Configurações de chat', 'Configurações de email', 'Faturamento', 'Gestão de usuários'],
     ['IA', 'Configurações de IA', 'Fontes de conhecimento'],
-    ['Integrações e canais', 'Central de integrações'],
+    ['Integrações e canais', 'Canais WhatsApp', 'Central de integrações'],
+  ]
+  const connectedNumbers = [
+    ['+55 17 98116-3721', 'Vendas', 'Conectado', 'Nicolas'],
+    ['+55 16 99220-4331', 'Suporte', 'Conectado', 'Amanda'],
+    ['+55 11 94399-1591', 'Financeiro', 'Aguardando verificação', 'Sem responsável'],
   ]
 
   return (
@@ -638,7 +643,7 @@ function SettingsBilling() {
               <p className="mb-2 text-xs font-semibold text-slate-400">{title}</p>
               <div className="space-y-1">
                 {items.map((item) => (
-                  <button key={item} className={`w-full truncate rounded-md px-3 py-2 text-left text-sm ${item === 'Faturamento' ? 'bg-blue-100 font-semibold text-blue-700' : 'hover:bg-slate-50'}`}>
+                  <button key={item} className={`w-full truncate rounded-md px-3 py-2 text-left text-sm ${item === 'Faturamento' || item === 'Canais WhatsApp' ? 'bg-blue-100 font-semibold text-blue-700' : 'hover:bg-slate-50'}`}>
                     {item}
                   </button>
                 ))}
@@ -657,6 +662,38 @@ function SettingsBilling() {
             <button className="px-2 pb-2 text-slate-500">Complementos</button>
             <button className="px-2 pb-2 text-slate-500">Uso</button>
           </div>
+          <div className="mb-5 rounded-md border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div>
+                <h3 className="text-lg font-semibold">Canais WhatsApp</h3>
+                <p className="mt-1 text-sm text-slate-500">Conecte vários números ao mesmo workspace e controle acesso por equipe.</p>
+              </div>
+              <button className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-semibold text-white">
+                <MessageCircle className="mr-2 inline" size={16} />
+                Sincronizar novo número
+              </button>
+            </div>
+            <div className="mt-5 grid gap-3 md:grid-cols-3">
+              <Info label="Números conectados" value={`${connectedNumbers.length} de 20`} />
+              <Info label="Limite inicial Meta" value="2 números" />
+              <Info label="Limite após escala" value="Até 20 números" />
+            </div>
+            <div className="mt-5 overflow-hidden rounded-md border border-slate-200">
+              {connectedNumbers.map(([number, label, status, owner]) => (
+                <div key={number} className="grid gap-3 border-b border-slate-100 p-4 text-sm md:grid-cols-[1fr_160px_180px_160px] md:items-center">
+                  <div className="font-semibold">{number}</div>
+                  <div className="text-slate-600">{label}</div>
+                  <div>
+                    <span className={`rounded px-2 py-1 text-xs font-semibold ${status === 'Conectado' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
+                      {status}
+                    </span>
+                  </div>
+                  <div className="text-slate-500">{owner}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
           <div className="rounded-md border border-slate-200 bg-white p-6 shadow-sm">
             <div className="flex flex-wrap items-center gap-2">
               <h3 className="text-lg font-semibold">Teste Pro</h3>
