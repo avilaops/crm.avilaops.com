@@ -3,29 +3,32 @@ import {
   AtSign,
   BarChart3,
   Bell,
+  BookOpen,
   Bot,
   CheckCircle2,
   Clock3,
+  CreditCard,
   Filter,
   FormInput,
   Inbox,
   KanbanSquare,
   Link2,
   List,
+  LogOut,
   MessageCircle,
   MessagesSquare,
   MoreHorizontal,
   Plus,
   Search,
   Send,
-  ShieldCheck,
-  Sparkles,
+  Settings,
   Target,
   UsersRound,
 } from 'lucide-react'
 import { useMemo, useState } from 'react'
 
 type View = 'pipeline' | 'list' | 'inbox' | 'tasks' | 'team' | 'analytics' | 'forms' | 'chat-button' | 'integrations' | 'agenda'
+type AppScreen = 'accounts' | 'crm'
 
 type Lead = {
   id: string
@@ -197,6 +200,7 @@ function ChannelBadge({ channel }: { channel: Lead['channel'] }) {
 }
 
 function App() {
+  const [screen, setScreen] = useState<AppScreen>('accounts')
   const [view, setView] = useState<View>('pipeline')
   const [selectedConversation, setSelectedConversation] = useState(conversations[0])
   const [search, setSearch] = useState('')
@@ -210,10 +214,14 @@ function App() {
   const totalPipeline = leads.reduce((sum, lead) => sum + lead.value, 0)
   const waitingCount = conversations.filter((conversation) => conversation.status !== 'Arquivado' && conversation.waitingMinutes > 15).length
 
+  if (screen === 'accounts') {
+    return <AccountSelect onEnter={() => setScreen('crm')} />
+  }
+
   return (
     <main className="min-h-screen bg-[#f4f1ff] text-slate-950">
       <div className="grid min-h-screen lg:grid-cols-[232px_minmax(0,1fr)]">
-        <aside className="border-r border-slate-200 bg-slate-950 text-white">
+        <aside className="flex min-h-screen flex-col border-r border-slate-200 bg-slate-950 text-white">
           <div className="flex items-center gap-3 border-b border-white/10 px-5 py-5">
             <div className="grid h-10 w-10 place-items-center rounded-md bg-emerald-500">
               <AtSign size={20} />
@@ -240,12 +248,26 @@ function App() {
               )
             })}
           </nav>
-          <div className="mx-3 mt-4 rounded-md bg-white/8 p-3 text-xs text-slate-300">
-            <div className="mb-2 flex items-center gap-2 font-semibold text-white">
-              <ShieldCheck size={15} />
-              Multi-tenant
+          <div className="mt-auto space-y-2 border-t border-white/10 p-3">
+            <button className="flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-left text-sm text-slate-300 hover:bg-white/10 hover:text-white" onClick={() => setView('integrations')}>
+              <BookOpen size={17} />
+              Central de ajuda
+            </button>
+            <button className="flex w-full items-center gap-3 rounded-md bg-white px-3 py-2.5 text-left text-sm text-slate-950" onClick={() => setView('integrations')}>
+              <Settings size={17} />
+              Configurações
+            </button>
+            <button className="flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-left text-sm text-slate-300 hover:bg-white/10 hover:text-white" onClick={() => setScreen('accounts')}>
+              <LogOut size={17} />
+              Trocar conta
+            </button>
+            <div className="flex items-center gap-3 px-3 pt-3">
+              <div className="grid h-9 w-9 place-items-center rounded-full bg-yellow-300 text-xs font-bold text-slate-950">NR</div>
+              <div className="min-w-0">
+                <p className="truncate text-sm font-semibold">Nicolas Rosa</p>
+                <p className="truncate text-xs text-slate-400">nicolasrosadb</p>
+              </div>
             </div>
-            Empresas, números, equipes e permissões separados por organização.
           </div>
         </aside>
 
@@ -300,11 +322,38 @@ function App() {
             {view === 'analytics' && <Analytics />}
             {view === 'forms' && <Builder title="Formulário web" icon={FormInput} />}
             {view === 'chat-button' && <Builder title="Botão de chat multi-mensageiros" icon={Bot} />}
-            {view === 'integrations' && <Integrations />}
+            {view === 'integrations' && <SettingsBilling />}
             {view === 'agenda' && <AgendaModule />}
           </div>
         </section>
       </div>
+    </main>
+  )
+}
+
+function AccountSelect({ onEnter }: { onEnter: () => void }) {
+  return (
+    <main className="min-h-screen bg-white px-6 py-10 text-[#080034]">
+      <section className="mx-auto max-w-5xl">
+        <h1 className="text-center text-3xl font-bold">Bem-vindo de volta, Nicolas Rosa</h1>
+        <div className="mt-9 rounded-md bg-[#f7f4ff] px-6 py-8 text-center">
+          <div className="mx-auto grid h-28 w-28 place-items-center rounded-full bg-yellow-300 text-3xl font-bold text-slate-950">NR</div>
+          <p className="mt-4 font-semibold text-[#8b81a8]">nicolasrosadb@gmail.com</p>
+          <div className="mt-7 flex flex-wrap justify-center gap-6 text-sm font-semibold">
+            <button className="hover:text-blue-600">Criar outra conta</button>
+            <button className="hover:text-blue-600">Acesse o portal do parceiro</button>
+            <button className="hover:text-blue-600">Sair</button>
+          </div>
+        </div>
+        <h2 className="mt-9 text-center text-2xl font-bold">Selecione uma conta</h2>
+        <button className="mt-7 flex w-full items-center justify-between rounded-md px-2 py-4 text-left hover:bg-slate-50" onClick={onEnter}>
+          <span className="flex items-center gap-4">
+            <span className="rounded-md bg-yellow-200 px-8 py-2 text-xs font-semibold">Teste</span>
+            <span className="font-bold">nicolasrosadb</span>
+          </span>
+          <span className="text-3xl">›</span>
+        </button>
+      </section>
     </main>
   )
 }
@@ -571,21 +620,72 @@ function Builder({ title, icon: Icon }: { title: string; icon: typeof FormInput 
   )
 }
 
-function Integrations() {
-  const apps = ['WhatsApp Cloud API', 'Instagram Direct', 'Google Sheets', 'HubSpot', 'Zapier', 'Webhooks']
+function SettingsBilling() {
+  const sections = [
+    ['Perfil', 'Configurações de perfil'],
+    ['Área de trabalho', 'Configurações de trabalho', 'Configurações de chat', 'Configurações de email', 'Faturamento', 'Gestão de usuários'],
+    ['IA', 'Configurações de IA', 'Fontes de conhecimento'],
+    ['Integrações e canais', 'Central de integrações'],
+  ]
+
   return (
-    <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-      {apps.map((app) => (
-        <div key={app} className="rounded-md border border-slate-200 bg-white p-5">
-          <div className="mb-4 flex items-center justify-between">
-            <Sparkles className="text-blue-600" />
-            <span className="rounded bg-slate-100 px-2 py-1 text-xs text-slate-500">Pronto para conectar</span>
-          </div>
-          <h3 className="font-semibold">{app}</h3>
-          <p className="mt-2 text-sm text-slate-500">Conecte eventos, contatos, mensagens e automações ao fluxo da equipe.</p>
-          <button className="mt-4 rounded-md border border-slate-200 px-3 py-2 text-sm font-medium">Configurar</button>
+    <div className="grid min-h-[720px] overflow-hidden rounded-md border border-slate-200 bg-white lg:grid-cols-[250px_minmax(0,1fr)]">
+      <aside className="border-r border-slate-200 p-4">
+        <h3 className="mb-5 text-sm font-bold uppercase">Configurações</h3>
+        <div className="space-y-5">
+          {sections.map(([title, ...items]) => (
+            <div key={title}>
+              <p className="mb-2 text-xs font-semibold text-slate-400">{title}</p>
+              <div className="space-y-1">
+                {items.map((item) => (
+                  <button key={item} className={`w-full truncate rounded-md px-3 py-2 text-left text-sm ${item === 'Faturamento' ? 'bg-blue-100 font-semibold text-blue-700' : 'hover:bg-slate-50'}`}>
+                    {item}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
         </div>
-      ))}
+      </aside>
+      <section className="bg-slate-50">
+        <div className="border-b border-slate-200 bg-white px-8 py-5">
+          <h2 className="font-bold uppercase">Faturamento</h2>
+        </div>
+        <div className="mx-auto max-w-3xl p-8">
+          <div className="mb-6 flex gap-8 border-b border-slate-200 text-sm">
+            <button className="border-b-2 border-blue-600 px-2 pb-2 text-slate-700">Meu plano</button>
+            <button className="px-2 pb-2 text-slate-500">Complementos</button>
+            <button className="px-2 pb-2 text-slate-500">Uso</button>
+          </div>
+          <div className="rounded-md border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="flex flex-wrap items-center gap-2">
+              <h3 className="text-lg font-semibold">Teste Pro</h3>
+              <span className="rounded bg-emerald-100 px-2 py-1 text-xs font-semibold text-emerald-700">11 dias restantes</span>
+            </div>
+            <p className="mt-2 text-sm text-slate-500">Explore o que está incluído no Pro durante seu período de teste.</p>
+            <ul className="mt-5 space-y-3 text-sm text-slate-700">
+              {['Transmissão', 'Automação avançada', 'Conexões ilimitadas no WhatsApp e Instagram', 'Agendamentos com agentes de IA', 'Reconhecimento de mensagens de voz com IA', 'Até 50 agentes de IA'].map((item) => (
+                <li key={item} className="flex items-center gap-3">
+                  <CheckCircle2 className="text-emerald-600" size={16} />
+                  {item}
+                </li>
+              ))}
+            </ul>
+            <div className="mt-6 flex flex-wrap gap-2">
+              <button className="rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white">
+                <CreditCard className="mr-2 inline" size={16} />
+                Assinar o Pro
+              </button>
+              <button className="rounded-md border border-slate-200 px-4 py-2 text-sm font-semibold">Explorar planos</button>
+            </div>
+          </div>
+          <div className="mt-5 grid gap-3 md:grid-cols-3">
+            <Info label="Usuários ativos" value="12 de 20" />
+            <Info label="Números conectados" value="3" />
+            <Info label="Mensagens no mês" value="18.420" />
+          </div>
+        </div>
+      </section>
     </div>
   )
 }
