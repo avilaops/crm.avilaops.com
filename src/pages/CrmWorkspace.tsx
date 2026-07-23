@@ -1,14 +1,10 @@
 import {
   Bell,
-  Bot,
-  CalendarDays,
   Check,
   CheckCircle2,
   ChevronRight,
   CircleHelp,
   FileText,
-  Home,
-  KanbanSquare,
   LayoutGrid,
   Link2,
   MessageCircle,
@@ -18,123 +14,12 @@ import {
   Send,
   Settings,
   Sparkles,
-  UsersRound,
   X,
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
-
-export type Screen = 'accounts' | 'app'
-export type Page =
-  | 'home'
-  | 'chat-inbox'
-  | 'mail-inbox'
-  | 'team-chat'
-  | 'pipeline'
-  | 'leads'
-  | 'calendar'
-  | 'segments'
-  | 'contacts'
-  | 'companies'
-  | 'all-contacts'
-  | 'media'
-  | 'products'
-  | 'ai-agent'
-  | 'automations'
-  | 'profile-settings'
-  | 'workspace-settings'
-  | 'chat-settings'
-  | 'mail-settings'
-  | 'billing'
-  | 'users'
-  | 'ai-settings'
-  | 'knowledge'
-  | 'integrations'
-
-const navGroups = [
-  {
-    items: [
-      { id: 'home', label: 'Início', icon: Home },
-      {
-        id: 'communications',
-        label: 'Comunicações',
-        icon: MessageCircle,
-        children: [
-          { id: 'chat-inbox', label: 'Inbox de chat' },
-          { id: 'mail-inbox', label: 'Inbox de email' },
-          { id: 'team-chat', label: 'Chats da equipe' },
-        ],
-      },
-      {
-        id: 'pipelines',
-        label: 'Pipelines',
-        icon: KanbanSquare,
-        children: [
-          { id: 'pipeline', label: 'Funil de vendas' },
-          { id: 'leads', label: 'Todos os leads' },
-        ],
-      },
-      { id: 'calendar', label: 'Calendário', icon: CalendarDays },
-      { id: 'segments', label: 'Segmentos', icon: UsersRound, badge: 'Beta' },
-      {
-        id: 'lists',
-        label: 'Listas',
-        icon: FileText,
-        children: [
-          { id: 'contacts', label: 'Contatos' },
-          { id: 'companies', label: 'Empresas' },
-          { id: 'all-contacts', label: 'Todos os contatos e empresas' },
-          { id: 'media', label: 'Mídia' },
-          { id: 'products', label: 'Produtos' },
-        ],
-      },
-      { id: 'ai-agent', label: 'Agente de IA', icon: Sparkles },
-      { id: 'automations', label: 'Automações', icon: Bot },
-    ],
-  },
-]
-
-const settingsItems = [
-  ['Perfil', 'profile-settings', 'Configurações de perfil'],
-  ['Área de trabalho', 'workspace-settings', 'Configurações de trabalho'],
-  ['Área de trabalho', 'chat-settings', 'Configurações de chat'],
-  ['Área de trabalho', 'mail-settings', 'Configurações de email'],
-  ['Área de trabalho', 'billing', 'Faturamento'],
-  ['Área de trabalho', 'users', 'Gestão de usuários'],
-  ['IA', 'ai-settings', 'Configurações de IA'],
-  ['IA', 'knowledge', 'Fontes de conhecimento'],
-  ['Integrações e canais', 'integrations', 'Central de integrações'],
-] as const
-
-const integrations = [
-  'WhatsApp Business',
-  'TikTok',
-  'Instagram',
-  'Facebook',
-  'Telegram',
-  'Slack',
-  'Wazzup',
-  'Google Sheets',
-  'Webhooks',
-  'Zapier',
-  'Make',
-  'Stripe',
-  'PayPal',
-  'Asaas',
-  'Google Agenda',
-  'Zoom',
-  'Twilio',
-  'OpenAI',
-  'Shopify',
-  'WooCommerce',
-  'RD Station',
-  'HubSpot',
-  'Pipedrive',
-  'Jotform',
-  'Typeform',
-  'Dropbox',
-  'Google Drive',
-  'Clicksign',
-]
+import { integrations, navGroups, settingsItems } from '../data/crm'
+import type { Page, Screen } from '../types'
+export type { Page } from '../types'
 
 type CrmWorkspaceProps = {
   initialPage: Page
