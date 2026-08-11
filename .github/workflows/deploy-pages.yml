@@ -35,6 +35,7 @@ jobs:
         run: npm run build
         env:
           GITHUB_PAGES: true
+          VITE_META_WORKER_URL: ${{ vars.VITE_META_WORKER_URL }}
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v4

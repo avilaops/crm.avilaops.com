@@ -1,9 +1,10 @@
 import { MessageCircle, MoreHorizontal, Plus, Search, X } from 'lucide-react'
+import type { LeadSource } from '../../components/modals/LeadSourceModal'
 import type { Page } from '../../types'
 
-function Workspace({ page, setPage, openWhatsApp }: { page: Page; setPage: (page: Page) => void; openWhatsApp: () => void }) {
-  if (page === 'home') return <HomePage setPage={setPage} openWhatsApp={openWhatsApp} />
-  if (page === 'chat-inbox') return <ChatInbox openWhatsApp={openWhatsApp} />
+function Workspace({ page, setPage, openLeadSource }: { page: Page; setPage: (page: Page) => void; openLeadSource: (source: LeadSource) => void }) {
+  if (page === 'home') return <HomePage setPage={setPage} openLeadSource={openLeadSource} />
+  if (page === 'chat-inbox') return <ChatInbox openLeadSource={openLeadSource} />
   if (page === 'mail-inbox') return <SimpleTable title="Caixa de entrada" tab="Inbox de email" columns={['De', 'Mensagem e conexão de lead', 'Data']} empty="Desculpe, não há mensagens." action="Escrever" />
   if (page === 'team-chat') return <TeamChat />
   if (page === 'pipeline') return <Pipeline />
@@ -17,7 +18,7 @@ function Workspace({ page, setPage, openWhatsApp }: { page: Page; setPage: (page
   if (page === 'segments') return <EmptyFeature title="Segmentos" body="Crie públicos por tags, comportamento, origem e etapa do funil." />
   if (page === 'ai-agent') return <EmptyFeature title="Agente de IA" body="Configure recepcionistas, sugestões e preenchimento automático de perfis." />
   if (page === 'automations') return <EmptyFeature title="Automações" body="Crie gatilhos ao mover etapas, receber mensagens ou vencer tarefas." />
-  return <HomePage setPage={setPage} openWhatsApp={openWhatsApp} />
+  return <HomePage setPage={setPage} openLeadSource={openLeadSource} />
 }
 
 export function Topbar({ title, tab, action }: { title: string; tab?: string; action?: string }) {
@@ -37,7 +38,7 @@ export function Topbar({ title, tab, action }: { title: string; tab?: string; ac
   )
 }
 
-function HomePage({ setPage, openWhatsApp }: { setPage: (page: Page) => void; openWhatsApp: () => void }) {
+function HomePage({ setPage, openLeadSource }: { setPage: (page: Page) => void; openLeadSource: (source: LeadSource) => void }) {
   return (
     <div>
       <Topbar title="Início" />
@@ -46,7 +47,7 @@ function HomePage({ setPage, openWhatsApp }: { setPage: (page: Page) => void; op
           <button className="absolute right-4 top-4 text-slate-400"><X size={16} /></button>
           <p className="text-sm text-slate-500">Boas-vindas à Agenda!</p>
           <h1 className="mt-3 max-w-md text-3xl font-bold">Converta chats em vendas com IA poderosa</h1>
-          <button className="mt-5 rounded bg-blue-600 px-4 py-2 text-sm font-semibold text-white" onClick={openWhatsApp}>Explore a Agenda</button>
+          <button className="mt-5 rounded bg-blue-600 px-4 py-2 text-sm font-semibold text-white" onClick={() => openLeadSource('whatsapp')}>Explore a Agenda</button>
           <div className="absolute right-12 top-8 hidden h-40 w-80 rounded bg-violet-100 p-5 md:block">
             <div className="rounded bg-white px-4 py-2 text-sm">Olá! Gostaria de fazer um pedido</div>
             <div className="mt-8 rounded bg-violet-600 px-4 py-2 text-sm text-white">O agente de IA está preparando uma resposta...</div>
@@ -71,7 +72,7 @@ function HomePage({ setPage, openWhatsApp }: { setPage: (page: Page) => void; op
         <section className="rounded bg-white p-5">
           <h3 className="font-semibold">Tutoriais</h3>
           <div className="mt-4 grid gap-4 md:grid-cols-3">
-            <Tutorial title="Conecte um canal" button="Conectar canal" onClick={openWhatsApp} />
+            <Tutorial title="Conecte um canal" button="Conectar canal" onClick={() => openLeadSource('whatsapp')} />
             <Tutorial title="Crie uma recepcionista com IA" button="Criar recepcionista com IA" />
             <Tutorial title="Crie um bot de boas-vindas" button="Criar bot" />
           </div>
@@ -92,7 +93,7 @@ function Tutorial({ title, button, onClick }: { title: string; button: string; o
   )
 }
 
-function ChatInbox({ openWhatsApp }: { openWhatsApp: () => void }) {
+function ChatInbox({ openLeadSource }: { openLeadSource: (source: LeadSource) => void }) {
   return (
     <div>
       <Topbar title="Caixa de entrada" />
@@ -102,7 +103,7 @@ function ChatInbox({ openWhatsApp }: { openWhatsApp: () => void }) {
             <span className="rounded bg-lime-100 px-2 py-1 text-xs text-lime-700">Conversas abertas</span>
             <span className="float-right text-xs text-slate-400">Total: 0</span>
           </div>
-          <button className="flex w-full gap-4 border-b border-slate-100 p-4 text-left" onClick={openWhatsApp}>
+          <button className="flex w-full gap-4 border-b border-slate-100 p-4 text-left" onClick={() => openLeadSource('whatsapp')}>
             <span className="grid h-11 w-11 place-items-center rounded-full border border-dashed border-slate-400">
               <Plus size={18} />
             </span>
@@ -117,9 +118,9 @@ function ChatInbox({ openWhatsApp }: { openWhatsApp: () => void }) {
           <div className="max-w-lg text-center text-slate-600">
             <p>Conecte seus canais para receber e responder a todas as mensagens em um só lugar.</p>
             <div className="mt-5 flex flex-wrap justify-center gap-2">
-              <button className="rounded border border-slate-200 bg-white px-3 py-2 text-sm font-semibold" onClick={openWhatsApp}>Conectar WhatsApp</button>
+              <button className="rounded border border-slate-200 bg-white px-3 py-2 text-sm font-semibold" onClick={() => openLeadSource('whatsapp')}>Conectar WhatsApp</button>
               <button className="rounded border border-slate-200 bg-white px-3 py-2 text-sm font-semibold">Conectar TikTok</button>
-              <button className="rounded border border-slate-200 bg-white px-3 py-2 text-sm font-semibold">Conectar Instagram</button>
+              <button className="rounded border border-slate-200 bg-white px-3 py-2 text-sm font-semibold" onClick={() => openLeadSource('instagram')}>Conectar Instagram</button>
               <button className="rounded border border-slate-200 bg-white px-3 py-2 text-sm font-semibold">Conectar Facebook</button>
             </div>
           </div>

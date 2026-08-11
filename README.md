@@ -29,6 +29,9 @@ O Vite abrirá a aplicação em `http://localhost:5173` apenas para desenvolvime
 ```powershell
 npm run build
 npm run lint
+Set-Location worker
+npm run build
+npx wrangler deploy --dry-run
 ```
 
 ## Build web
@@ -38,6 +41,33 @@ npm run build
 ```
 
 Os arquivos estáticos ficam em `dist/` e podem ser publicados em qualquer hospedagem web.
+
+## Integração Meta
+
+O frontend usa `VITE_META_WORKER_URL` para chamar o Worker que cria a URL OAuth, troca o código por token e salva o status em KV.
+
+Em desenvolvimento:
+
+```powershell
+Set-Location worker
+npm install
+npm run dev
+```
+
+No frontend, use `.env.local` com:
+
+```text
+VITE_META_WORKER_URL=http://localhost:8787
+```
+
+Em produção no GitHub Pages, configure a repository variable `VITE_META_WORKER_URL` com a URL publicada do Worker. Não commitar `.env.production`; ele contém segredos.
+
+Antes de publicar o Worker:
+
+1. Criar um KV namespace no Cloudflare.
+2. Substituir `REPLACE_WITH_KV_NAMESPACE_ID` em `worker/wrangler.toml`.
+3. Configurar `ALLOWED_ORIGINS` para os domínios autorizados.
+4. Publicar com `npm run deploy` dentro da pasta `worker`.
 
 ## Próximo passo para multi-tenant
 

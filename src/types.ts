@@ -25,3 +25,4 @@ export type Page =
   | 'ai-settings'
   | 'knowledge'
   | 'integrations'
+  | 'lead-sources'

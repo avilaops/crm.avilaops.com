@@ -3,7 +3,7 @@ import AccountSelect from '../components/layout/AccountSelect'
 import Copilot from '../components/layout/Copilot'
 import Sidebar from '../components/layout/Sidebar'
 import KnowledgeModal from '../components/modals/KnowledgeModal'
-import WhatsAppModal from '../components/modals/WhatsAppModal'
+import LeadSourceModal, { type LeadSource } from '../components/modals/LeadSourceModal'
 import SettingsShell from './settings/SettingsPages'
 import Workspace from './workspace/WorkspacePages'
 import type { Page, Screen } from '../types'
@@ -17,7 +17,7 @@ type CrmWorkspaceProps = {
 function CrmWorkspace({ initialPage, onPageChange }: CrmWorkspaceProps) {
   const [screen, setScreen] = useState<Screen>('accounts')
   const [page, setPageState] = useState<Page>(initialPage)
-  const [whatsappModal, setWhatsappModal] = useState(false)
+  const [leadSourceModal, setLeadSourceModal] = useState<LeadSource | null>(null)
   const [knowledgeModal, setKnowledgeModal] = useState(false)
 
   useEffect(() => {
@@ -38,7 +38,8 @@ function CrmWorkspace({ initialPage, onPageChange }: CrmWorkspaceProps) {
     page === 'billing' ||
     page === 'users' ||
     page === 'knowledge' ||
-    page === 'integrations'
+    page === 'integrations' ||
+    page === 'lead-sources'
 
   return (
     <main className="min-h-screen bg-[#f3f3f3] text-slate-800">
@@ -48,12 +49,18 @@ function CrmWorkspace({ initialPage, onPageChange }: CrmWorkspaceProps) {
           {inSettings ? (
             <SettingsShell page={page} setPage={setPage} openKnowledge={() => setKnowledgeModal(true)} />
           ) : (
-            <Workspace page={page} setPage={setPage} openWhatsApp={() => setWhatsappModal(true)} />
+            <Workspace page={page} setPage={setPage} openLeadSource={setLeadSourceModal} />
           )}
         </section>
         <Copilot />
       </div>
-      {whatsappModal && <WhatsAppModal onClose={() => setWhatsappModal(false)} />}
+      {leadSourceModal && (
+        <LeadSourceModal
+          source={leadSourceModal}
+          onClose={() => setLeadSourceModal(null)}
+          onConnected={() => undefined}
+        />
+      )}
       {knowledgeModal && <KnowledgeModal onClose={() => setKnowledgeModal(false)} />}
     </main>
   )

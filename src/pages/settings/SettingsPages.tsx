@@ -1,6 +1,8 @@
-import { Check, CheckCircle2, Plus } from 'lucide-react'
-import { useState } from 'react'
+import { Check, CheckCircle2, MessageCircle, Music2, Plus } from 'lucide-react'
+import { useEffect, useState, type FormEvent } from 'react'
+import LeadSourceModal, { InstagramIcon, type LeadSource } from '../../components/modals/LeadSourceModal'
 import { integrations, settingsItems } from '../../data/crm'
+import { disconnectMeta, getMetaStatus, saveMetaCredentials, type MetaStatus } from '../../lib/meta'
 import type { Page } from '../../types'
 import { Topbar } from '../workspace/WorkspacePages'
 
@@ -10,7 +12,7 @@ function SettingsShell({ page, setPage, openKnowledge }: { page: Page; setPage: 
       <aside className="border-r border-slate-200 bg-white">
         <h2 className="border-b border-slate-200 p-5 text-sm font-bold uppercase">Configurações</h2>
         <div className="p-4 text-sm">
-          {['Perfil', 'Área de trabalho', 'IA', 'Integrações e canais'].map((group) => (
+          {['Perfil', 'Área de trabalho', 'Funil de vendas', 'IA', 'Integrações e canais'].map((group) => (
             <div key={group} className="mb-5">
               <p className="mb-2 text-xs font-semibold text-slate-400">{group}</p>
               {settingsItems.filter(([section]) => section === group).map(([, id, label]) => (
@@ -29,7 +31,8 @@ function SettingsShell({ page, setPage, openKnowledge }: { page: Page; setPage: 
         {page === 'ai-settings' && <AISettings />}
         {page === 'knowledge' && <Knowledge openKnowledge={openKnowledge} />}
         {page === 'integrations' && <IntegrationCenter />}
-        {!['profile-settings', 'billing', 'users', 'ai-settings', 'knowledge', 'integrations'].includes(page) && <GenericSettings title={settingsItems.find(([, id]) => id === page)?.[2] || 'Configurações'} />}
+        {page === 'lead-sources' && <LeadSources />}
+        {!['profile-settings', 'billing', 'users', 'ai-settings', 'knowledge', 'integrations', 'lead-sources'].includes(page) && <GenericSettings title={settingsItems.find(([, id]) => id === page)?.[2] || 'Configurações'} />}
       </section>
     </div>
   )
@@ -216,6 +219,164 @@ function IntegrationCenter() {
           ))}
         </div>
       </div>
+    </div>
+  )
+}
+
+function LeadSources() {
+  const [status, setStatus] = useState<MetaStatus | null>(null)
+  const [loadingStatus, setLoadingStatus] = useState(true)
+  const [openSource, setOpenSource] = useState<LeadSource | null>(null)
+  const [showCredentials, setShowCredentials] = useState(false)
+  const [appId, setAppId] = useState('')
+  const [appSecret, setAppSecret] = useState('')
+  const [savingCredentials, setSavingCredentials] = useState(false)
+  const [credentialsError, setCredentialsError] = useState('')
+  const [disconnecting, setDisconnecting] = useState(false)
+
+  useEffect(() => {
+    getMetaStatus()
+      .then((result) => {
+        setStatus(result)
+        setAppId(result.appId)
+      })
+      .catch(() => setStatus(null))
+      .finally(() => setLoadingStatus(false))
+  }, [])
+
+  async function handleSaveCredentials(event: FormEvent) {
+    event.preventDefault()
+    setSavingCredentials(true)
+    setCredentialsError('')
+    try {
+      const result = await saveMetaCredentials(appId, appSecret)
+      setStatus(result)
+      setAppSecret('')
+      setShowCredentials(false)
+    } catch (err) {
+      setCredentialsError(typeof err === 'string' ? err : 'Não foi possível salvar as credenciais.')
+    } finally {
+      setSavingCredentials(false)
+    }
+  }
+
+  async function handleDisconnect() {
+    setDisconnecting(true)
+    try {
+      setStatus(await disconnectMeta())
+    } finally {
+      setDisconnecting(false)
+    }
+  }
+
+  const sources = [
+    { id: 'whatsapp' as const, label: 'WhatsApp', iconBg: 'bg-emerald-500', icon: MessageCircle, ready: true },
+    { id: 'instagram' as const, label: 'Instagram', iconBg: 'bg-gradient-to-tr from-amber-400 via-pink-500 to-purple-600', icon: InstagramIcon, ready: true },
+    { id: 'tiktok' as const, label: 'TikTok', iconBg: 'bg-slate-900', icon: Music2, ready: false },
+  ]
+
+  return (
+    <div>
+      <SettingsHeader title="Fontes de lead" />
+      <div className="p-6">
+        <p className="mb-4 text-sm text-slate-500">
+          Conecte canais para capturar leads automaticamente no seu funil de vendas. WhatsApp e Instagram usam o mesmo login da Meta.
+        </p>
+
+        <div className="mb-6 rounded border border-slate-200 bg-white p-5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-semibold">Aplicativo da Meta</p>
+              <p className="mt-1 text-sm text-slate-500">
+                {loadingStatus
+                  ? 'Verificando configuração...'
+                  : status?.connected
+                    ? `Conectado como ${status.userName ?? 'conta Meta'}`
+                    : status?.configured
+                      ? 'App ID configurado. Ainda não conectado.'
+                      : 'Configure o App ID e o App Secret do app já publicado na Meta para liberar as fontes abaixo.'}
+              </p>
+            </div>
+            <div className="flex gap-2">
+              {status?.connected && (
+                <button
+                  className="rounded border border-slate-200 px-3 py-2 text-xs font-semibold disabled:opacity-60"
+                  onClick={handleDisconnect}
+                  disabled={disconnecting}
+                >
+                  {disconnecting ? 'Desconectando...' : 'Desconectar'}
+                </button>
+              )}
+              <button className="rounded border border-slate-200 px-3 py-2 text-xs font-semibold" onClick={() => setShowCredentials((value) => !value)}>
+                {status?.configured ? 'Editar credenciais' : 'Configurar credenciais'}
+              </button>
+            </div>
+          </div>
+
+          {showCredentials && (
+            <form className="mt-4 grid gap-3 border-t border-slate-100 pt-4 sm:grid-cols-2" onSubmit={handleSaveCredentials}>
+              <label className="grid gap-1 text-sm">
+                <span className="text-slate-600">App ID</span>
+                <input className="input" value={appId} onChange={(event) => setAppId(event.target.value)} placeholder="000000000000000" required />
+              </label>
+              <label className="grid gap-1 text-sm">
+                <span className="text-slate-600">App Secret</span>
+                <input
+                  className="input"
+                  type="password"
+                  value={appSecret}
+                  onChange={(event) => setAppSecret(event.target.value)}
+                  placeholder={status?.configured ? 'deixe em branco para manter o atual' : ''}
+                />
+              </label>
+              {credentialsError && <p className="text-sm text-red-600 sm:col-span-2">{credentialsError}</p>}
+              <div className="flex gap-2 sm:col-span-2">
+                <button className="rounded bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60" type="submit" disabled={savingCredentials}>
+                  {savingCredentials ? 'Salvando...' : 'Salvar credenciais'}
+                </button>
+                <a
+                  className="rounded border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-600"
+                  href="https://developers.facebook.com/apps"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Abrir developers.facebook.com
+                </a>
+              </div>
+            </form>
+          )}
+        </div>
+
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {sources.map((source) => {
+            const Icon = source.icon
+            const connected = source.ready && status?.connected
+            return (
+              <div key={source.id} className="rounded border border-slate-200 bg-white p-5 text-center">
+                <div className={`mx-auto grid h-14 w-14 place-items-center rounded-2xl text-white ${source.iconBg}`}>
+                  <Icon size={26} />
+                </div>
+                <p className="mt-3 font-semibold">{source.label}</p>
+                {connected ? (
+                  <span className="mt-4 inline-block rounded border border-emerald-500 px-3 py-2 text-xs font-semibold text-emerald-600">Conectado</span>
+                ) : (
+                  <button
+                    className={`mt-4 rounded px-3 py-2 text-xs font-semibold ${source.ready ? 'bg-blue-600 text-white' : 'cursor-not-allowed bg-slate-100 text-slate-400'}`}
+                    disabled={!source.ready}
+                    onClick={() => source.ready && setOpenSource(source.id as LeadSource)}
+                  >
+                    {source.ready ? '+ Adicionar fonte' : 'Em breve'}
+                  </button>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      </div>
+
+      {openSource && (
+        <LeadSourceModal source={openSource} onClose={() => setOpenSource(null)} onConnected={(result) => setStatus(result)} />
+      )}
     </div>
   )
 }

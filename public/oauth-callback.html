@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Conectando com a Meta...</title>
+  </head>
+  <body style="font-family: system-ui, sans-serif; display: grid; place-items: center; height: 100vh; margin: 0; color: #475569;">
+    <p>Concluindo login com a Meta...</p>
+    <script>
+      var params = new URLSearchParams(window.location.search);
+      var payload = {
+        type: 'meta-oauth-code',
+        code: params.get('code'),
+        state: params.get('state'),
+        error: params.get('error_description') || params.get('error') || null,
+      };
+      if (window.opener) {
+        window.opener.postMessage(payload, window.location.origin);
+      }
+      window.close();
+    </script>
+  </body>
+</html>

@@ -78,6 +78,7 @@ export const settingsItems = [
   ['Área de trabalho', 'mail-settings', 'Configurações de email'],
   ['Área de trabalho', 'billing', 'Faturamento'],
   ['Área de trabalho', 'users', 'Gestão de usuários'],
+  ['Funil de vendas', 'lead-sources', 'Fontes de lead'],
   ['IA', 'ai-settings', 'Configurações de IA'],
   ['IA', 'knowledge', 'Fontes de conhecimento'],
   ['Integrações e canais', 'integrations', 'Central de integrações'],
