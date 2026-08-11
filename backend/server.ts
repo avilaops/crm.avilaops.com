@@ -1,9 +1,11 @@
 import { config } from "dotenv";
 import fastifyStatic from "@fastify/static";
-import Fastify from "fastify";
+import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import { existsSync } from "node:fs";
+import { createHash, randomBytes, scrypt as scryptCallback, timingSafeEqual } from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import { z } from "zod";
 import { query } from "./db.js";
 
@@ -14,6 +16,9 @@ const META_GRAPH_VERSION = "v23.0";
 const META_PROVIDER = "meta";
 const DEFAULT_TENANT_SLUG = process.env.DEFAULT_TENANT_SLUG ?? "avila-ops";
 const PORT = Number(process.env.PORT ?? 3000);
+const SESSION_COOKIE = "agenda_session";
+const SESSION_DAYS = 7;
+const scrypt = promisify(scryptCallback);
 
 type MetaIntegration = {
   app_id: string | null;
@@ -24,9 +29,84 @@ type MetaIntegration = {
   token_expires_at: string | null;
 };
 
+type AuthUser = {
+  id: string;
+  tenant_id: string;
+  name: string;
+  email: string;
+  role: string;
+};
+
 const here = dirname(fileURLToPath(import.meta.url));
 const rootDir = join(here, "..");
 const distDir = join(rootDir, "dist");
+
+function parseCookies(header?: string) {
+  const cookies = new Map<string, string>();
+  for (const part of (header ?? "").split(";")) {
+    const [rawName, ...rawValue] = part.trim().split("=");
+    if (!rawName || rawValue.length === 0) continue;
+    cookies.set(rawName, decodeURIComponent(rawValue.join("=")));
+  }
+  return cookies;
+}
+
+function hashToken(token: string) {
+  return createHash("sha256").update(token).digest("hex");
+}
+
+async function hashPassword(password: string) {
+  const salt = randomBytes(16).toString("hex");
+  const derived = (await scrypt(password, salt, 64)) as Buffer;
+  return `scrypt$${salt}$${derived.toString("hex")}`;
+}
+
+async function verifyPassword(password: string, stored: string | null) {
+  if (!stored) return false;
+  const [method, salt, expectedHex] = stored.split("$");
+  if (method !== "scrypt" || !salt || !expectedHex) return false;
+  const actual = (await scrypt(password, salt, 64)) as Buffer;
+  const expected = Buffer.from(expectedHex, "hex");
+  return actual.length === expected.length && timingSafeEqual(actual, expected);
+}
+
+async function ensureInitialAdminPassword() {
+  const password = process.env.ADMIN_INITIAL_PASSWORD;
+  if (!password) return;
+  const tenantId = await getTenantId();
+  const passwordHash = await hashPassword(password);
+  await query("update users set password_hash = coalesce(password_hash, $1) where tenant_id = $2 and email = $3", [
+    passwordHash,
+    tenantId,
+    "nicolasrosaab@gmail.com",
+  ]);
+}
+
+async function getSessionUser(cookieHeader?: string): Promise<AuthUser | null> {
+  const token = parseCookies(cookieHeader).get(SESSION_COOKIE);
+  if (!token) return null;
+  const result = await query<AuthUser>(
+    `select u.id, u.tenant_id, u.name, u.email, u.role
+     from sessions s
+     join users u on u.id = s.user_id
+     where s.token_hash = $1 and s.expires_at > now()`,
+    [hashToken(token)],
+  );
+  const user = result.rows[0] ?? null;
+  if (user) {
+    await query("update sessions set last_seen_at = now() where token_hash = $1", [hashToken(token)]);
+  }
+  return user;
+}
+
+async function requireAuth(request: FastifyRequest, reply: FastifyReply) {
+  const user = await getSessionUser(request.headers.cookie as string | undefined);
+  if (!user) {
+    reply.code(401).send({ error: "Autenticacao obrigatoria." });
+    return null;
+  }
+  return user;
+}
 
 function requireSetupToken(requestToken?: string) {
   const expected = process.env.SETUP_TOKEN;
@@ -70,16 +150,75 @@ const exchangeSchema = z.object({
   redirectUri: z.string().url(),
 });
 
+const loginSchema = z.object({
+  email: z.string().email(),
+  password: z.string().min(8),
+});
+
 async function main() {
   const app = Fastify({ logger: true });
+  await ensureInitialAdminPassword();
 
   app.get("/api/health", async () => {
     await query("select 1");
     return { ok: true, database: "connected" };
   });
 
-  app.get("/api/bootstrap", async () => {
-    const tenantId = await getTenantId();
+  app.get("/api/auth/session", async (request) => {
+    const user = await getSessionUser(request.headers.cookie);
+    return { authenticated: Boolean(user), user };
+  });
+
+  app.post("/api/auth/login", async (request, reply) => {
+    const body = loginSchema.parse(request.body);
+    const result = await query<AuthUser & { password_hash: string | null }>(
+      `select u.id, u.tenant_id, u.name, u.email, u.role, u.password_hash
+       from users u
+       join tenants t on t.id = u.tenant_id
+       where lower(u.email) = lower($1) and t.slug = $2`,
+      [body.email, DEFAULT_TENANT_SLUG],
+    );
+    const user = result.rows[0];
+    if (!user || !(await verifyPassword(body.password, user.password_hash))) {
+      return reply.code(401).send({ error: "Email ou senha invalidos." });
+    }
+
+    const token = randomBytes(32).toString("hex");
+    const expiresAt = new Date(Date.now() + SESSION_DAYS * 24 * 60 * 60 * 1000);
+    await query("insert into sessions (tenant_id, user_id, token_hash, expires_at) values ($1, $2, $3, $4)", [
+      user.tenant_id,
+      user.id,
+      hashToken(token),
+      expiresAt.toISOString(),
+    ]);
+    await query("insert into events (tenant_id, actor_user_id, entity_type, entity_id, event_type) values ($1, $2, $3, $4, $5)", [
+      user.tenant_id,
+      user.id,
+      "user",
+      user.id,
+      "auth.login",
+    ]);
+
+    reply.header(
+      "Set-Cookie",
+      `${SESSION_COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_DAYS * 24 * 60 * 60}${process.env.NODE_ENV === "production" ? "; Secure" : ""}`,
+    );
+    return { authenticated: true, user: { id: user.id, tenant_id: user.tenant_id, name: user.name, email: user.email, role: user.role } };
+  });
+
+  app.post("/api/auth/logout", async (request, reply) => {
+    const token = parseCookies(request.headers.cookie).get(SESSION_COOKIE);
+    if (token) {
+      await query("delete from sessions where token_hash = $1", [hashToken(token)]);
+    }
+    reply.header("Set-Cookie", `${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${process.env.NODE_ENV === "production" ? "; Secure" : ""}`);
+    return { authenticated: false };
+  });
+
+  app.get("/api/bootstrap", async (request, reply) => {
+    const user = await requireAuth(request, reply);
+    if (!user) return;
+    const tenantId = user.tenant_id;
     const [tenant, users, contacts, channels, conversations, messages, leads] = await Promise.all([
       query("select id, name, slug, created_at from tenants where id = $1", [tenantId]),
       query("select id, name, email, role, created_at from users where tenant_id = $1 order by created_at", [tenantId]),
@@ -93,6 +232,7 @@ async function main() {
     return {
       tenant: tenant.rows[0],
       users: users.rows,
+      currentUser: user,
       contacts: contacts.rows,
       channels: channels.rows,
       conversations: conversations.rows,
@@ -101,12 +241,16 @@ async function main() {
     };
   });
 
-  app.get("/api/meta/status", async () => {
+  app.get("/api/meta/status", async (request, reply) => {
+    const user = await requireAuth(request, reply);
+    if (!user) return;
     const { integration } = await getMetaIntegration();
     return metaStatus(integration);
   });
 
   app.post("/api/meta/credentials", async (request, reply) => {
+    const user = await requireAuth(request, reply);
+    if (!user) return;
     if (!requireSetupToken(request.headers["x-setup-token"] as string | undefined)) {
       return reply.code(401).send({ error: "Token administrativo invalido." });
     }
@@ -133,6 +277,8 @@ async function main() {
   });
 
   app.get("/api/meta/login-url", async (request, reply) => {
+    const user = await requireAuth(request, reply);
+    if (!user) return;
     const redirectUri = z.string().url().parse((request.query as { redirectUri?: string }).redirectUri);
     const { integration } = await getMetaIntegration();
     if (!integration?.app_id || !integration?.app_secret) {
@@ -171,6 +317,8 @@ async function main() {
   });
 
   app.post("/api/meta/exchange", async (request, reply) => {
+    const user = await requireAuth(request, reply);
+    if (!user) return;
     const body = exchangeSchema.parse(request.body);
     const { tenantId, integration } = await getMetaIntegration();
     if (!integration?.app_id || !integration?.app_secret) {
@@ -225,6 +373,8 @@ async function main() {
   });
 
   app.post("/api/meta/disconnect", async (request, reply) => {
+    const user = await requireAuth(request, reply);
+    if (!user) return;
     if (!requireSetupToken(request.headers["x-setup-token"] as string | undefined)) {
       return reply.code(401).send({ error: "Token administrativo invalido." });
     }

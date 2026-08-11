@@ -1,0 +1,41 @@
+export type SessionUser = {
+  id: string
+  tenant_id: string
+  name: string
+  email: string
+  role: string
+}
+
+type SessionResponse = {
+  authenticated: boolean
+  user: SessionUser | null
+}
+
+async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(path, {
+    ...init,
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },
+  })
+  const data = await response.json().catch(() => null)
+  if (!response.ok) {
+    const message = data && typeof data === 'object' && 'error' in data ? String((data as { error: unknown }).error) : 'Erro ao comunicar com o servidor.'
+    throw message
+  }
+  return data as T
+}
+
+export function getSession() {
+  return fetchJson<SessionResponse>('/api/auth/session')
+}
+
+export function login(email: string, password: string) {
+  return fetchJson<SessionResponse>('/api/auth/login', {
+    method: 'POST',
+    body: JSON.stringify({ email, password }),
+  })
+}
+
+export function logout() {
+  return fetchJson<SessionResponse>('/api/auth/logout', { method: 'POST' })
+}

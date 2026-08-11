@@ -12,10 +12,26 @@ create table if not exists users (
   tenant_id uuid not null references tenants(id) on delete cascade,
   name text not null,
   email text not null,
+  password_hash text,
   role text not null default 'admin',
   created_at timestamptz not null default now(),
   unique (tenant_id, email)
 );
+
+alter table users add column if not exists password_hash text;
+
+create table if not exists sessions (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null references tenants(id) on delete cascade,
+  user_id uuid not null references users(id) on delete cascade,
+  token_hash text not null unique,
+  expires_at timestamptz not null,
+  created_at timestamptz not null default now(),
+  last_seen_at timestamptz not null default now()
+);
+
+create index if not exists sessions_user_id_idx on sessions(user_id);
+create index if not exists sessions_expires_at_idx on sessions(expires_at);
 
 create table if not exists contacts (
   id uuid primary key default gen_random_uuid(),
