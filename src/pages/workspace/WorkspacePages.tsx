@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Archive, MessageCircle, MoreHorizontal, Plus, Search, X } from 'lucide-react'
 import type { LeadSource } from '../../components/modals/LeadSourceModal'
-import { archiveConversation, assignConversation, bootstrap, listChannels, listConversationMessages, listConversations, sendConversationMessage, type ConversationFilters, type CrmChannel, type CrmConversation, type CrmMessage, type CrmUser } from '../../lib/crm'
+import { archiveConversation, assignConversation, bootstrap, createLeadFromConversation, getPipeline, listChannels, listContacts, listConversationMessages, listConversations, listLeads, sendConversationMessage, type ConversationFilters, type CrmChannel, type CrmContact, type CrmConversation, type CrmLead, type CrmMessage, type CrmUser, type PipelineStage } from '../../lib/crm'
 import type { Page } from '../../types'
 
 function Workspace({ page, setPage, openLeadSource }: { page: Page; setPage: (page: Page) => void; openLeadSource: (source: LeadSource) => void }) {
@@ -10,9 +10,9 @@ function Workspace({ page, setPage, openLeadSource }: { page: Page; setPage: (pa
   if (page === 'mail-inbox') return <SimpleTable title="Caixa de entrada" tab="Inbox de email" columns={['De', 'Mensagem e conexão de lead', 'Data']} empty="Desculpe, não há mensagens." action="Escrever" />
   if (page === 'team-chat') return <TeamChat />
   if (page === 'pipeline') return <Pipeline />
-  if (page === 'leads') return <SimpleTable title="Leads" tab="Leads ativos" columns={['Lead título', 'Contato principal', 'Empresa do contato', 'Etapa do lead', 'Venda, R$']} empty="Desculpe, nenhum lead encontrado. Mostrar tudo" action="+ Novo lead" />
+  if (page === 'leads') return <LeadsList />
   if (page === 'calendar') return <CalendarPage />
-  if (page === 'contacts') return <SimpleTable title="Contatos" tab="Lista completa" columns={['Nome', 'Empresa', 'Telefone', 'E-mail']} empty="Desculpe, nenhum contato encontrado. Mostrar tudo" action="+ Adicionar contato" />
+  if (page === 'contacts') return <ContactsList />
   if (page === 'companies') return <SimpleTable title="Empresas" tab="Lista completa" columns={['Empresa', 'Telefone', 'Responsável', 'Status']} empty="Nenhuma empresa encontrada." action="+ Adicionar empresa" />
   if (page === 'all-contacts') return <SimpleTable title="Todos os contatos e empresas" tab="Lista completa" columns={['Nome', 'Tipo', 'Telefone', 'E-mail']} empty="Nenhum registro encontrado." action="+ Adicionar" />
   if (page === 'media') return <EmptyFeature title="Mídia" body="Arquivos, imagens e documentos usados nas conversas ficarão aqui." />
@@ -105,6 +105,7 @@ function ChatInbox({ openLeadSource }: { openLeadSource: (source: LeadSource) =>
   const [total, setTotal] = useState(0)
   const [reply, setReply] = useState('')
   const [sending, setSending] = useState(false)
+  const [creatingLead, setCreatingLead] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
@@ -181,6 +182,20 @@ function ChatInbox({ openLeadSource }: { openLeadSource: (source: LeadSource) =>
       setError(err instanceof Error ? err.message : String(err))
     } finally {
       setSending(false)
+    }
+  }
+
+  async function handleCreateLead() {
+    if (!selected) return
+    setCreatingLead(true)
+    setError('')
+    try {
+      await createLeadFromConversation(selected.id)
+      setError('Lead criado e vinculado ao contato da conversa.')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setCreatingLead(false)
     }
   }
 
@@ -296,6 +311,9 @@ function ChatInbox({ openLeadSource }: { openLeadSource: (source: LeadSource) =>
                     <Archive size={15} />
                     Arquivar
                   </button>
+                  <button className="rounded bg-blue-600 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60" disabled={creatingLead} onClick={handleCreateLead}>
+                    {creatingLead ? 'Criando...' : 'Criar lead'}
+                  </button>
                 </div>
               </div>
               <div className="flex-1 space-y-3 overflow-auto p-5">
@@ -371,17 +389,37 @@ function TeamChat() {
 }
 
 function Pipeline() {
+  const [stages, setStages] = useState<PipelineStage[]>([])
+  const [leads, setLeads] = useState<CrmLead[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    getPipeline()
+      .then((data) => {
+        setStages(data.stages)
+        setLeads(data.leads)
+      })
+      .catch((err: Error) => setError(err.message))
+      .finally(() => setLoading(false))
+  }, [])
+
   return (
     <div>
       <Topbar title="Leads" tab="Leads ativos" action="+ Novo lead" />
       <div className="overflow-auto p-5">
-        <div className="grid min-w-[980px] grid-cols-4 gap-4 rounded bg-white p-4">
-          {['Leads de entrada', 'Decidindo', 'Discussão de contrato', 'Decisão final'].map((stage, index) => (
-            <div key={stage} className="min-h-[520px]">
-              <div className="border-b-4 pb-2 text-center text-sm font-bold uppercase tracking-[0.14em]" style={{ borderColor: ['#facc15', '#a855f7', '#7dd957', '#3b82f6'][index] }}>
-                {stage}
+        {error && <p className="mb-4 rounded border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>}
+        <div className="grid min-w-[980px] gap-4 rounded bg-white p-4" style={{ gridTemplateColumns: `repeat(${Math.max(stages.length, 1)}, minmax(220px, 1fr))` }}>
+          {loading && <p className="p-4 text-sm text-slate-400">Carregando funil...</p>}
+          {!loading && stages.map((stage) => (
+            <div key={stage.id} className="min-h-[520px]">
+              <div className="border-b-4 pb-2 text-center text-sm font-bold uppercase tracking-[0.14em]" style={{ borderColor: stage.color }}>
+                {stage.name}
               </div>
-              <LeadCard name={['Mary Chan', 'Lisa Runner', 'Agnes Ruiz', 'Aaron Mayers'][index]} company={['Consulta de Marketing', 'Consulta de RP', 'Análise social media', 'Consulta social media'][index]} value={['R$450', 'R$450', 'R$5.000', 'R$5.000'][index]} />
+              {leads.filter((lead) => lead.stage_id === stage.id).map((lead) => (
+                <LeadCard key={lead.id} name={lead.contact_name ?? lead.title} company={lead.title} value={formatCurrency(lead.value_cents)} />
+              ))}
+              {leads.filter((lead) => lead.stage_id === stage.id).length === 0 && <p className="p-4 text-center text-sm text-slate-400">Sem leads nesta etapa.</p>}
             </div>
           ))}
         </div>
@@ -403,6 +441,124 @@ function LeadCard({ name, company, value }: { name: string; company: string; val
       </div>
     </div>
   )
+}
+
+function ContactsList() {
+  const [contacts, setContacts] = useState<CrmContact[]>([])
+  const [search, setSearch] = useState('')
+  const [total, setTotal] = useState(0)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => {
+      setLoading(true)
+      listContacts({ search, page: 1, pageSize: 50 })
+        .then((data) => {
+          setContacts(data.contacts)
+          setTotal(data.pagination.total)
+          setError('')
+        })
+        .catch((err: Error) => setError(err.message))
+        .finally(() => setLoading(false))
+    }, 250)
+    return () => window.clearTimeout(timeout)
+  }, [search])
+
+  return (
+    <DataPage title="Contatos" tab={`${total} contato(s)`} search={search} setSearch={setSearch} error={error}>
+      <DataTable columns={['Nome', 'Empresa', 'Telefone', 'E-mail', 'Origem', 'Atualizado']}>
+        {loading && <TableMessage colSpan={6} text="Carregando contatos..." />}
+        {!loading && contacts.length === 0 && <TableMessage colSpan={6} text="Nenhum contato encontrado." />}
+        {contacts.map((contact) => (
+          <tr key={contact.id} className="border-b border-slate-100">
+            <td className="px-4 py-3 font-medium">{contact.name}</td>
+            <td className="px-4 py-3">{contact.company ?? '-'}</td>
+            <td className="px-4 py-3">{contact.phone ?? '-'}</td>
+            <td className="px-4 py-3">{contact.email ?? '-'}</td>
+            <td className="px-4 py-3">{contact.source ?? '-'}</td>
+            <td className="px-4 py-3">{new Date(contact.updated_at).toLocaleString('pt-BR')}</td>
+          </tr>
+        ))}
+      </DataTable>
+    </DataPage>
+  )
+}
+
+function LeadsList() {
+  const [leads, setLeads] = useState<CrmLead[]>([])
+  const [search, setSearch] = useState('')
+  const [total, setTotal] = useState(0)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => {
+      setLoading(true)
+      listLeads({ search, page: 1, pageSize: 50 })
+        .then((data) => {
+          setLeads(data.leads)
+          setTotal(data.pagination.total)
+          setError('')
+        })
+        .catch((err: Error) => setError(err.message))
+        .finally(() => setLoading(false))
+    }, 250)
+    return () => window.clearTimeout(timeout)
+  }, [search])
+
+  return (
+    <DataPage title="Leads" tab={`${total} lead(s)`} search={search} setSearch={setSearch} error={error}>
+      <DataTable columns={['Lead', 'Contato', 'Empresa', 'Etapa', 'Valor', 'Status']}>
+        {loading && <TableMessage colSpan={6} text="Carregando leads..." />}
+        {!loading && leads.length === 0 && <TableMessage colSpan={6} text="Nenhum lead encontrado." />}
+        {leads.map((lead) => (
+          <tr key={lead.id} className="border-b border-slate-100">
+            <td className="px-4 py-3 font-medium">{lead.title}</td>
+            <td className="px-4 py-3">{lead.contact_name ?? '-'}</td>
+            <td className="px-4 py-3">{lead.contact_company ?? '-'}</td>
+            <td className="px-4 py-3">{lead.stage_name ?? '-'}</td>
+            <td className="px-4 py-3">{formatCurrency(lead.value_cents)}</td>
+            <td className="px-4 py-3"><span className="rounded bg-emerald-100 px-2 py-1 text-xs font-semibold text-emerald-700">{lead.status}</span></td>
+          </tr>
+        ))}
+      </DataTable>
+    </DataPage>
+  )
+}
+
+function DataPage({ title, tab, search, setSearch, error, children }: { title: string; tab: string; search: string; setSearch: (value: string) => void; error: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <Topbar title={title} tab={tab} />
+      <div className="space-y-4 p-5">
+        <input className="w-full max-w-md rounded border border-slate-200 bg-white px-3 py-2 text-sm outline-none" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar..." />
+        {error && <p className="rounded border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>}
+        {children}
+      </div>
+    </div>
+  )
+}
+
+function DataTable({ columns, children }: { columns: string[]; children: React.ReactNode }) {
+  return (
+    <div className="overflow-auto bg-white">
+      <table className="min-w-[860px] w-full border-collapse text-sm">
+        <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
+          <tr>{columns.map((column) => <th key={column} className="border-b border-slate-200 px-4 py-3">{column}</th>)}</tr>
+        </thead>
+        <tbody>{children}</tbody>
+      </table>
+    </div>
+  )
+}
+
+function TableMessage({ colSpan, text }: { colSpan: number; text: string }) {
+  return <tr><td className="px-4 py-6 text-slate-400" colSpan={colSpan}>{text}</td></tr>
+}
+
+function formatCurrency(valueCents: number) {
+  return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(valueCents / 100)
 }
 
 function SimpleTable({ title, tab, columns, empty, action }: { title: string; tab: string; columns: string[]; empty: string; action: string }) {

@@ -391,6 +391,18 @@ const sendMessageSchema = z.object({
   idempotencyKey: z.string().trim().min(8).max(120).optional(),
 });
 
+const listQuerySchema = z.object({
+  search: z.string().trim().optional(),
+  page: z.coerce.number().int().min(1).optional().default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).optional().default(30),
+});
+
+const createLeadSchema = z.object({
+  title: z.string().trim().min(1).max(180).optional(),
+  valueCents: z.coerce.number().int().min(0).optional().default(0),
+  stageId: z.string().uuid().optional(),
+});
+
 function canManage(user: AuthUser) {
   return user.role === "admin" || user.role === "gerente" || user.role === "manager";
 }
@@ -727,6 +739,46 @@ async function main() {
     return { ok: true };
   });
 
+  app.post("/api/conversations/:id/lead", async (request, reply) => {
+    const user = await requireAuth(request, reply);
+    if (!user) return;
+    const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+    const body = createLeadSchema.parse(request.body);
+    const conversation = await query<{ contact_id: string | null; contact_name: string | null; contact_company: string | null }>(
+      `select c.contact_id, ct.name as contact_name, ct.company as contact_company
+       from conversations c
+       left join contacts ct on ct.id = c.contact_id
+       where c.tenant_id = $1 and c.id = $2`,
+      [user.tenant_id, id],
+    );
+    const row = conversation.rows[0];
+    if (!row) return reply.code(404).send({ error: "Conversa nao encontrada." });
+    if (!row.contact_id) return reply.code(400).send({ error: "Conversa sem contato vinculado." });
+
+    let stageId = body.stageId ?? null;
+    if (!stageId) {
+      const firstStage = await query<{ id: string }>(
+        `select ps.id
+         from pipeline_stages ps
+         join pipelines p on p.id = ps.pipeline_id
+         where p.tenant_id = $1
+         order by ps.position asc
+         limit 1`,
+        [user.tenant_id],
+      );
+      stageId = firstStage.rows[0]?.id ?? null;
+    }
+
+    const lead = await query(
+      `insert into leads (tenant_id, contact_id, stage_id, title, value_cents, status, updated_at)
+       values ($1, $2, $3, $4, $5, 'open', now())
+       returning id, title, value_cents, status, stage_id, contact_id, created_at, updated_at`,
+      [user.tenant_id, row.contact_id, stageId, body.title ?? `Atendimento - ${row.contact_name ?? "Contato"}`, body.valueCents],
+    );
+    await recordEvent(user.tenant_id, "lead", "lead.created_from_conversation", { conversation_id: id, lead_id: lead.rows[0].id }, user.id, lead.rows[0].id, (request as RequestWithId).requestId);
+    return { lead: lead.rows[0] };
+  });
+
   app.post("/api/conversations/:id/assign", async (request, reply) => {
     const user = await requireAuth(request, reply);
     if (!user) return;
@@ -753,19 +805,84 @@ async function main() {
   app.get("/api/contacts", async (request, reply) => {
     const user = await requireAuth(request, reply);
     if (!user) return;
-    const result = await query("select id, name, email, phone, company, source, created_at, updated_at from contacts where tenant_id = $1 order by updated_at desc limit 500", [
-      user.tenant_id,
-    ]);
-    return { contacts: result.rows };
+    const filters = listQuerySchema.parse(request.query);
+    const params: unknown[] = [user.tenant_id];
+    const where = ["tenant_id = $1"];
+    if (filters.search) {
+      params.push(`%${filters.search}%`);
+      where.push(`(name ilike $${params.length} or phone ilike $${params.length} or email ilike $${params.length} or company ilike $${params.length})`);
+    }
+    const countParams = [...params];
+    params.push(filters.pageSize, (filters.page - 1) * filters.pageSize);
+    const result = await query(
+      `select id, name, email, phone, company, source, created_at, updated_at
+       from contacts
+       where ${where.join(" and ")}
+       order by updated_at desc
+       limit $${params.length - 1} offset $${params.length}`,
+      params,
+    );
+    const count = await query<{ total: string }>(`select count(*)::text as total from contacts where ${where.join(" and ")}`, countParams);
+    return { contacts: result.rows, pagination: { page: filters.page, pageSize: filters.pageSize, total: Number(count.rows[0]?.total ?? 0) } };
   });
 
   app.get("/api/leads", async (request, reply) => {
     const user = await requireAuth(request, reply);
     if (!user) return;
-    const result = await query("select id, title, value_cents, status, stage_id, contact_id, created_at, updated_at from leads where tenant_id = $1 order by updated_at desc limit 500", [
-      user.tenant_id,
-    ]);
-    return { leads: result.rows };
+    const filters = listQuerySchema.parse(request.query);
+    const params: unknown[] = [user.tenant_id];
+    const where = ["l.tenant_id = $1"];
+    if (filters.search) {
+      params.push(`%${filters.search}%`);
+      where.push(`(l.title ilike $${params.length} or c.name ilike $${params.length} or c.phone ilike $${params.length} or c.company ilike $${params.length} or ps.name ilike $${params.length})`);
+    }
+    const countParams = [...params];
+    params.push(filters.pageSize, (filters.page - 1) * filters.pageSize);
+    const result = await query(
+      `select l.id, l.title, l.value_cents, l.status, l.stage_id, l.contact_id, l.created_at, l.updated_at,
+              c.name as contact_name, c.phone as contact_phone, c.company as contact_company,
+              ps.name as stage_name, ps.color as stage_color
+       from leads l
+       left join contacts c on c.id = l.contact_id
+       left join pipeline_stages ps on ps.id = l.stage_id
+       where ${where.join(" and ")}
+       order by l.updated_at desc
+       limit $${params.length - 1} offset $${params.length}`,
+      params,
+    );
+    const count = await query<{ total: string }>(
+      `select count(*)::text as total
+       from leads l
+       left join contacts c on c.id = l.contact_id
+       left join pipeline_stages ps on ps.id = l.stage_id
+       where ${where.join(" and ")}`,
+      countParams,
+    );
+    return { leads: result.rows, pagination: { page: filters.page, pageSize: filters.pageSize, total: Number(count.rows[0]?.total ?? 0) } };
+  });
+
+  app.get("/api/pipeline", async (request, reply) => {
+    const user = await requireAuth(request, reply);
+    if (!user) return;
+    const stages = await query(
+      `select ps.id, ps.pipeline_id, ps.name, ps.position, ps.color, p.name as pipeline_name
+       from pipeline_stages ps
+       join pipelines p on p.id = ps.pipeline_id
+       where p.tenant_id = $1
+       order by ps.position asc`,
+      [user.tenant_id],
+    );
+    const leads = await query(
+      `select l.id, l.title, l.value_cents, l.status, l.stage_id, l.contact_id, l.created_at, l.updated_at,
+              c.name as contact_name, c.phone as contact_phone, c.company as contact_company
+       from leads l
+       left join contacts c on c.id = l.contact_id
+       where l.tenant_id = $1 and l.status = 'open'
+       order by l.updated_at desc
+       limit 200`,
+      [user.tenant_id],
+    );
+    return { stages: stages.rows, leads: leads.rows };
   });
 
   app.get("/api/channels", async (request, reply) => {

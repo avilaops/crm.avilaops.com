@@ -49,6 +49,42 @@ export type CrmUser = {
   role: string
 }
 
+export type CrmContact = {
+  id: string
+  name: string
+  email: string | null
+  phone: string | null
+  company: string | null
+  source: string | null
+  created_at: string
+  updated_at: string
+}
+
+export type CrmLead = {
+  id: string
+  title: string
+  value_cents: number
+  status: string
+  stage_id: string | null
+  contact_id: string | null
+  contact_name?: string | null
+  contact_phone?: string | null
+  contact_company?: string | null
+  stage_name?: string | null
+  stage_color?: string | null
+  created_at: string
+  updated_at: string
+}
+
+export type PipelineStage = {
+  id: string
+  pipeline_id: string
+  pipeline_name: string
+  name: string
+  position: number
+  color: string
+}
+
 export type ConversationFilters = {
   status?: string
   channelId?: string
@@ -98,6 +134,14 @@ export function archiveConversation(conversationId: string) {
   return api<{ ok: boolean }>(`/api/conversations/${conversationId}/archive`, { method: 'POST' })
 }
 
+export function createLeadFromConversation(conversationId: string, title?: string) {
+  return api<{ lead: CrmLead }>(`/api/conversations/${conversationId}/lead`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title }),
+  })
+}
+
 export function assignConversation(conversationId: string, userId: string | null) {
   return api<{ ok: boolean }>(`/api/conversations/${conversationId}/assign`, {
     method: 'POST',
@@ -122,4 +166,16 @@ export function syncMetaChannels() {
   return api<{ channels: Array<{ id: string; displayPhoneNumber: string | null; verifiedName: string | null }>; created: number; updated: number; total: number }>('/api/meta/sync-channels', {
     method: 'POST',
   })
+}
+
+export function listContacts(filters?: { search?: string; page?: number; pageSize?: number }) {
+  return api<{ contacts: CrmContact[]; pagination: { page: number; pageSize: number; total: number } }>(`/api/contacts${toQuery(filters)}`)
+}
+
+export function listLeads(filters?: { search?: string; page?: number; pageSize?: number }) {
+  return api<{ leads: CrmLead[]; pagination: { page: number; pageSize: number; total: number } }>(`/api/leads${toQuery(filters)}`)
+}
+
+export function getPipeline() {
+  return api<{ stages: PipelineStage[]; leads: CrmLead[] }>('/api/pipeline')
 }
