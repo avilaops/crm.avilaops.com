@@ -1,3 +1,5 @@
+name: agenda-crm
+
 services:
   app:
     build:
