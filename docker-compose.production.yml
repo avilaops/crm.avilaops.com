@@ -1,0 +1,41 @@
+services:
+  app:
+    build:
+      context: .
+    container_name: agenda-crm-app
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - .env.production.local
+    ports:
+      - "127.0.0.1:3020:3000"
+    networks:
+      - agenda-crm
+
+  db:
+    image: postgres:16-alpine
+    container_name: agenda-crm-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: agenda_crm
+      POSTGRES_USER: agenda_crm
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - agenda-crm-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agenda_crm -d agenda_crm"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - agenda-crm
+
+networks:
+  agenda-crm:
+    name: agenda-crm
+
+volumes:
+  agenda-crm-postgres:
+    name: agenda-crm-postgres

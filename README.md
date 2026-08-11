@@ -48,6 +48,17 @@ O backend serve a API e o frontend compilado no mesmo processo.
 - API: `http://localhost:3000/api`
 - Healthcheck: `http://localhost:3000/api/health`
 
+## Deploy com Docker
+
+Em produção, use uma stack isolada:
+
+```powershell
+docker compose --env-file .env.production.local -f docker-compose.production.yml up -d --build
+docker compose --env-file .env.production.local -f docker-compose.production.yml exec app npm run db:migrate
+```
+
+O app expõe apenas `127.0.0.1:3020` no host. O Postgres fica somente na rede Docker `agenda-crm`.
+
 ## Banco local
 
 Configure `.env.local`:
