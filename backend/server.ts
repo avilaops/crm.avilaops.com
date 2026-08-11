@@ -164,6 +164,13 @@ async function main() {
   const app = Fastify({ logger: true });
   await ensureInitialAdminPassword();
 
+  app.addHook("onSend", async (request, reply, payload) => {
+    if (request.url.startsWith("/api/")) {
+      reply.header("Cache-Control", "no-store");
+    }
+    return payload;
+  });
+
   app.get("/api/health", async () => {
     await query("select 1");
     return { ok: true, database: "connected" };
