@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Archive, MessageCircle, MoreHorizontal, Plus, Search, X } from 'lucide-react'
 import type { LeadSource } from '../../components/modals/LeadSourceModal'
-import { archiveConversation, listConversationMessages, listConversations, type CrmConversation, type CrmMessage } from '../../lib/crm'
+import { archiveConversation, assignConversation, bootstrap, listChannels, listConversationMessages, listConversations, sendConversationMessage, type ConversationFilters, type CrmChannel, type CrmConversation, type CrmMessage, type CrmUser } from '../../lib/crm'
 import type { Page } from '../../types'
 
 function Workspace({ page, setPage, openLeadSource }: { page: Page; setPage: (page: Page) => void; openLeadSource: (source: LeadSource) => void }) {
@@ -99,15 +99,37 @@ function ChatInbox({ openLeadSource }: { openLeadSource: (source: LeadSource) =>
   const [conversations, setConversations] = useState<CrmConversation[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [messages, setMessages] = useState<CrmMessage[]>([])
+  const [channels, setChannels] = useState<CrmChannel[]>([])
+  const [users, setUsers] = useState<CrmUser[]>([])
+  const [filters, setFilters] = useState<ConversationFilters>({ page: 1, pageSize: 30 })
+  const [total, setTotal] = useState(0)
+  const [reply, setReply] = useState('')
+  const [sending, setSending] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
+  const refresh = (nextFilters = filters) => {
+    setLoading(true)
+    listConversations(nextFilters)
+      .then((data) => {
+        setConversations(data.conversations)
+        setTotal(data.pagination.total)
+        setSelectedId((current) => current && data.conversations.some((item) => item.id === current) ? current : data.conversations[0]?.id ?? null)
+        setError('')
+      })
+      .catch((err: Error) => setError(err.message))
+      .finally(() => setLoading(false))
+  }
+
   useEffect(() => {
     let active = true
-    listConversations()
-      .then((data) => {
+    Promise.all([listConversations({ page: 1, pageSize: 30 }), listChannels(), bootstrap()])
+      .then(([data, channelData, boot]) => {
         if (!active) return
         setConversations(data.conversations)
+        setTotal(data.pagination.total)
+        setChannels(channelData.channels)
+        setUsers(boot.users)
         setSelectedId(data.conversations[0]?.id ?? null)
       })
       .catch((err: Error) => active && setError(err.message))
@@ -116,6 +138,11 @@ function ChatInbox({ openLeadSource }: { openLeadSource: (source: LeadSource) =>
       active = false
     }
   }, [])
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => refresh(filters), 250)
+    return () => window.clearTimeout(timeout)
+  }, [filters])
 
   useEffect(() => {
     if (!selectedId) {
@@ -133,16 +160,70 @@ function ChatInbox({ openLeadSource }: { openLeadSource: (source: LeadSource) =>
 
   const selected = conversations.find((conversation) => conversation.id === selectedId) ?? null
   const waitingCount = conversations.filter((conversation) => conversation.status === 'waiting').length
+  const selectedAssignee = selected?.assigned_user_id ?? ''
+
+  async function handleAssign(userId: string) {
+    if (!selected) return
+    await assignConversation(selected.id, userId || null)
+    refresh()
+  }
+
+  async function handleSend() {
+    if (!selected || !reply.trim()) return
+    setSending(true)
+    setError('')
+    try {
+      const result = await sendConversationMessage(selected.id, reply.trim())
+      setMessages((items) => [...items, result.message])
+      setReply('')
+      refresh()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setSending(false)
+    }
+  }
 
   return (
     <div>
       <Topbar title="Caixa de entrada" />
       <div className="grid min-h-[calc(100vh-4rem)] grid-cols-[360px_minmax(0,1fr)]">
         <aside className="border-r border-slate-200 bg-white">
-          <div className="border-b border-slate-200 p-4">
+          <div className="space-y-3 border-b border-slate-200 p-4">
             <span className="rounded bg-lime-100 px-2 py-1 text-xs text-lime-700">Conversas abertas</span>
-            <span className="float-right text-xs text-slate-400">Total: {conversations.length}</span>
+            <span className="float-right text-xs text-slate-400">Total: {total}</span>
             {waitingCount > 0 && <p className="mt-2 text-xs font-semibold text-amber-600">{waitingCount} cliente(s) aguardando resposta</p>}
+            <input
+              className="w-full rounded border border-slate-200 px-3 py-2 text-sm outline-none"
+              placeholder="Buscar contato, telefone, empresa, mensagem..."
+              value={filters.search ?? ''}
+              onChange={(event) => setFilters((current) => ({ ...current, search: event.target.value, page: 1 }))}
+            />
+            <div className="grid grid-cols-2 gap-2">
+              <select className="rounded border border-slate-200 px-2 py-2 text-xs" value={filters.status ?? ''} onChange={(event) => setFilters((current) => ({ ...current, status: event.target.value || undefined, page: 1 }))}>
+                <option value="">Todos status</option>
+                <option value="waiting">Aguardando</option>
+                <option value="open">Aberto</option>
+                <option value="archived">Arquivado</option>
+              </select>
+              <select className="rounded border border-slate-200 px-2 py-2 text-xs" value={filters.channelId ?? ''} onChange={(event) => setFilters((current) => ({ ...current, channelId: event.target.value || undefined, page: 1 }))}>
+                <option value="">Todos canais</option>
+                {channels.map((channel) => <option key={channel.id} value={channel.id}>{channel.phone_number ?? channel.display_name}</option>)}
+              </select>
+              <select className="rounded border border-slate-200 px-2 py-2 text-xs" value={filters.assignedUserId ?? ''} onChange={(event) => setFilters((current) => ({ ...current, assignedUserId: event.target.value || undefined, unassigned: undefined, page: 1 }))}>
+                <option value="">Todos atendentes</option>
+                {users.map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}
+              </select>
+              <button className={`rounded border px-2 py-2 text-xs ${filters.unassigned ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-slate-200'}`} onClick={() => setFilters((current) => ({ ...current, unassigned: !current.unassigned, assignedUserId: undefined, page: 1 }))}>
+                Sem responsável
+              </button>
+              <button className={`rounded border px-2 py-2 text-xs ${filters.slaOverdue ? 'border-amber-500 bg-amber-50 text-amber-700' : 'border-slate-200'}`} onClick={() => setFilters((current) => ({ ...current, slaOverdue: !current.slaOverdue, page: 1 }))}>
+                SLA vencido
+              </button>
+              <button className="rounded border border-slate-200 px-2 py-2 text-xs" onClick={() => setFilters({ page: 1, pageSize: 30 })}>
+                Limpar
+              </button>
+            </div>
           </div>
           <button className="flex w-full gap-4 border-b border-slate-100 p-4 text-left" onClick={() => openLeadSource('whatsapp')}>
             <span className="grid h-11 w-11 place-items-center rounded-full border border-dashed border-slate-400">
@@ -203,13 +284,19 @@ function ChatInbox({ openLeadSource }: { openLeadSource: (source: LeadSource) =>
                   <h3 className="font-semibold">{selected.contact_name ?? selected.contact_phone ?? 'Contato'}</h3>
                   <p className="text-xs text-slate-500">{selected.channel_name ?? 'WhatsApp'} · {selected.status}</p>
                 </div>
-                <button
-                  className="inline-flex items-center gap-2 rounded border border-slate-200 px-3 py-2 text-sm font-semibold"
-                  onClick={() => archiveConversation(selected.id).then(() => setConversations((items) => items.map((item) => item.id === selected.id ? { ...item, status: 'archived' } : item)))}
-                >
-                  <Archive size={15} />
-                  Arquivar
-                </button>
+                <div className="flex items-center gap-2">
+                  <select className="rounded border border-slate-200 px-3 py-2 text-sm" value={selectedAssignee} onChange={(event) => handleAssign(event.target.value)}>
+                    <option value="">Sem responsável</option>
+                    {users.map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}
+                  </select>
+                  <button
+                    className="inline-flex items-center gap-2 rounded border border-slate-200 px-3 py-2 text-sm font-semibold"
+                    onClick={() => archiveConversation(selected.id).then(() => setConversations((items) => items.map((item) => item.id === selected.id ? { ...item, status: 'archived' } : item)))}
+                  >
+                    <Archive size={15} />
+                    Arquivar
+                  </button>
+                </div>
               </div>
               <div className="flex-1 space-y-3 overflow-auto p-5">
                 {messages.length === 0 && <p className="mt-12 text-center text-sm text-slate-400">Nenhuma mensagem gravada para esta conversa.</p>}
@@ -217,10 +304,21 @@ function ChatInbox({ openLeadSource }: { openLeadSource: (source: LeadSource) =>
                   <div key={message.id} className={`flex ${message.direction === 'inbound' ? 'justify-start' : 'justify-end'}`}>
                     <div className={`max-w-[72%] rounded px-4 py-3 text-sm shadow-sm ${message.direction === 'inbound' ? 'bg-white' : 'bg-blue-600 text-white'}`}>
                       <p>{message.body}</p>
-                      <p className={`mt-2 text-xs ${message.direction === 'inbound' ? 'text-slate-400' : 'text-blue-100'}`}>{new Date(message.sent_at).toLocaleString('pt-BR')}</p>
+                      <p className={`mt-2 text-xs ${message.direction === 'inbound' ? 'text-slate-400' : 'text-blue-100'}`}>
+                        {new Date(message.sent_at).toLocaleString('pt-BR')} · {message.status}
+                      </p>
+                      {message.error_message && <p className="mt-1 text-xs text-red-500">{message.error_message}</p>}
                     </div>
                   </div>
                 ))}
+              </div>
+              <div className="border-t border-slate-200 bg-white p-4">
+                <textarea className="h-20 w-full resize-none rounded border border-slate-200 p-3 text-sm outline-none" value={reply} onChange={(event) => setReply(event.target.value)} placeholder="Responder pelo WhatsApp..." />
+                <div className="mt-2 flex justify-end">
+                  <button className="rounded bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60" disabled={sending || !reply.trim()} onClick={handleSend}>
+                    {sending ? 'Enviando...' : 'Enviar resposta'}
+                  </button>
+                </div>
               </div>
             </div>
           )}

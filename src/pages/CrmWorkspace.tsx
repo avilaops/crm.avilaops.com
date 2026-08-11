@@ -39,7 +39,8 @@ function CrmWorkspace({ initialPage, onPageChange }: CrmWorkspaceProps) {
     page === 'users' ||
     page === 'knowledge' ||
     page === 'integrations' ||
-    page === 'lead-sources'
+    page === 'lead-sources' ||
+    page === 'channels'
 
   return (
     <main className="min-h-screen bg-[#f3f3f3] text-slate-800">

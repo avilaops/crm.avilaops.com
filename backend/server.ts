@@ -58,6 +58,8 @@ type WhatsAppWebhookPayload = {
   }>;
 };
 
+type RequestWithId = FastifyRequest & { requestId?: string };
+
 const here = dirname(fileURLToPath(import.meta.url));
 const rootDir = join(here, "..");
 const distDir = join(rootDir, "dist");
@@ -327,12 +329,23 @@ async function processWhatsAppWebhook(tenantId: string, payload: WhatsAppWebhook
 
       for (const status of value?.statuses ?? []) {
         statuses += 1;
-        await query("insert into events (tenant_id, entity_type, event_type, payload) values ($1, $2, $3, $4)", [
-          tenantId,
-          "message",
-          "meta.message_status",
-          JSON.stringify(status),
-        ]);
+        const externalId = typeof status.id === "string" ? status.id : null;
+        const deliveryStatus = typeof status.status === "string" ? status.status : "unknown";
+        if (externalId) {
+          await query(
+            `update messages
+             set status = $3, error_message = $4, metadata = metadata || $5::jsonb
+             where tenant_id = $1 and external_id = $2`,
+            [
+              tenantId,
+              externalId,
+              deliveryStatus,
+              Array.isArray(status.errors) ? JSON.stringify(status.errors) : null,
+              JSON.stringify({ latest_status: status }),
+            ],
+          );
+        }
+        await recordEvent(tenantId, "message", "meta.message_status", { external_id: externalId, status: deliveryStatus, raw: status });
       }
     }
   }
@@ -360,8 +373,38 @@ const assignSchema = z.object({
   userId: z.string().uuid().nullable(),
 });
 
+const conversationQuerySchema = z.object({
+  status: z.string().optional(),
+  channelId: z.string().uuid().optional(),
+  assignedUserId: z.string().uuid().optional(),
+  unassigned: z.coerce.boolean().optional(),
+  slaOverdue: z.coerce.boolean().optional(),
+  search: z.string().trim().optional(),
+  sort: z.enum(["last_message_at", "waiting_seconds", "created_at"]).optional().default("last_message_at"),
+  order: z.enum(["asc", "desc"]).optional().default("desc"),
+  page: z.coerce.number().int().min(1).optional().default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).optional().default(30),
+});
+
+const sendMessageSchema = z.object({
+  body: z.string().trim().min(1).max(4096),
+  idempotencyKey: z.string().trim().min(8).max(120).optional(),
+});
+
 function canManage(user: AuthUser) {
   return user.role === "admin" || user.role === "gerente" || user.role === "manager";
+}
+
+async function recordEvent(tenantId: string, entityType: string, eventType: string, payload: unknown, actorUserId?: string | null, entityId?: string | null, requestId?: string | null) {
+  await query("insert into events (tenant_id, actor_user_id, entity_type, entity_id, event_type, payload, request_id) values ($1, $2, $3, $4, $5, $6, $7)", [
+    tenantId,
+    actorUserId ?? null,
+    entityType,
+    entityId ?? null,
+    eventType,
+    JSON.stringify(payload ?? {}),
+    requestId ?? null,
+  ]);
 }
 
 async function main() {
@@ -378,7 +421,13 @@ async function main() {
     }
   });
 
+  app.addHook("onRequest", async (request) => {
+    const incoming = request.headers["x-request-id"];
+    (request as RequestWithId).requestId = typeof incoming === "string" && incoming.length <= 120 ? incoming : randomUUID();
+  });
+
   app.addHook("onSend", async (request, reply, payload) => {
+    reply.header("X-Request-Id", (request as RequestWithId).requestId ?? randomUUID());
     if (request.url.startsWith("/api/")) {
       reply.header("Cache-Control", "no-store");
     }
@@ -484,6 +533,41 @@ async function main() {
   app.get("/api/conversations", async (request, reply) => {
     const user = await requireAuth(request, reply);
     if (!user) return;
+    const filters = conversationQuerySchema.parse(request.query);
+    const where = ["c.tenant_id = $1"];
+    const params: unknown[] = [user.tenant_id];
+    const add = (value: unknown) => {
+      params.push(value);
+      return `$${params.length}`;
+    };
+    if (filters.status) where.push(`c.status = ${add(filters.status)}`);
+    if (filters.channelId) where.push(`c.channel_id = ${add(filters.channelId)}`);
+    if (filters.assignedUserId) where.push(`c.assigned_user_id = ${add(filters.assignedUserId)}`);
+    if (filters.unassigned) where.push("c.assigned_user_id is null and c.status <> 'archived'");
+    if (filters.slaOverdue) {
+      where.push("(c.status <> 'archived' and c.last_customer_message_at is not null and (c.last_agent_message_at is null or c.last_customer_message_at > c.last_agent_message_at) and now() - c.last_customer_message_at > interval '15 minutes')");
+    }
+    if (filters.search) {
+      const searchParam = add(`%${filters.search}%`);
+      where.push(`(
+        c.id::text ilike ${searchParam}
+        or ct.name ilike ${searchParam}
+        or ct.phone ilike ${searchParam}
+        or ct.company ilike ${searchParam}
+        or exists (
+          select 1 from messages m
+          where m.tenant_id = c.tenant_id and m.conversation_id = c.id and m.body ilike ${searchParam}
+        )
+      )`);
+    }
+    const countParams = [...params];
+    const offset = (filters.page - 1) * filters.pageSize;
+    const orderColumn =
+      filters.sort === "waiting_seconds"
+        ? "waiting_seconds"
+        : filters.sort === "created_at"
+          ? "c.created_at"
+          : "coalesce(c.last_message_at, c.created_at)";
     const result = await query(
       `select c.id, c.channel_id, c.contact_id, c.assigned_user_id, c.status, c.archived_at,
               c.last_message_at, c.last_customer_message_at, c.last_agent_message_at, c.created_at,
@@ -500,12 +584,19 @@ async function main() {
        left join contacts ct on ct.id = c.contact_id
        left join channels ch on ch.id = c.channel_id
        left join users u on u.id = c.assigned_user_id
-       where c.tenant_id = $1
-       order by coalesce(c.last_message_at, c.created_at) desc
-       limit 100`,
-      [user.tenant_id],
+       where ${where.join(" and ")}
+       order by ${orderColumn} ${filters.order}
+       limit ${add(filters.pageSize)} offset ${add(offset)}`,
+      params,
     );
-    return { conversations: result.rows };
+    const count = await query<{ total: string }>(
+      `select count(*)::text as total
+       from conversations c
+       left join contacts ct on ct.id = c.contact_id
+       where ${where.join(" and ")}`,
+      countParams,
+    );
+    return { conversations: result.rows, pagination: { page: filters.page, pageSize: filters.pageSize, total: Number(count.rows[0]?.total ?? 0) } };
   });
 
   app.get("/api/conversations/:id/messages", async (request, reply) => {
@@ -513,13 +604,107 @@ async function main() {
     if (!user) return;
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
     const result = await query(
-      `select id, conversation_id, external_id, direction, sender_name, sender_phone, body, message_type, sent_at, created_at
+      `select id, conversation_id, external_id, direction, sender_name, sender_phone, body, message_type, status, error_message, request_id, sent_at, created_at
        from messages
        where tenant_id = $1 and conversation_id = $2
        order by sent_at asc, created_at asc`,
       [user.tenant_id, id],
     );
     return { messages: result.rows };
+  });
+
+  app.post("/api/conversations/:id/messages", async (request, reply) => {
+    const user = await requireAuth(request, reply);
+    if (!user) return;
+    const requestId = (request as RequestWithId).requestId;
+    const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+    const body = sendMessageSchema.parse(request.body);
+    const idempotencyKey = body.idempotencyKey ?? randomUUID();
+
+    const existing = await query(
+      `select id, conversation_id, external_id, direction, sender_name, sender_phone, body, message_type, status, sent_at, created_at, error_message, request_id
+       from messages where tenant_id = $1 and idempotency_key = $2`,
+      [user.tenant_id, idempotencyKey],
+    );
+    if (existing.rows[0]) return { message: existing.rows[0], idempotent: true };
+
+    const conversation = await query<{
+      id: string;
+      contact_phone: string | null;
+      channel_external_id: string | null;
+      channel_id: string | null;
+    }>(
+      `select c.id, c.channel_id, ct.phone as contact_phone, ch.external_id as channel_external_id
+       from conversations c
+       left join contacts ct on ct.id = c.contact_id
+       left join channels ch on ch.id = c.channel_id
+       where c.tenant_id = $1 and c.id = $2`,
+      [user.tenant_id, id],
+    );
+    const row = conversation.rows[0];
+    if (!row) return reply.code(404).send({ error: "Conversa nao encontrada." });
+    if (!row.channel_external_id || !row.contact_phone) return reply.code(400).send({ error: "Conversa sem canal ou telefone valido." });
+
+    const { integration } = await getMetaIntegration();
+    if (!integration?.access_token) return reply.code(400).send({ error: "Meta ainda nao conectada." });
+
+    const messagePayload = {
+      messaging_product: "whatsapp",
+      recipient_type: "individual",
+      to: row.contact_phone,
+      type: "text",
+      text: { preview_url: false, body: body.body },
+    };
+
+    let externalId: string | null = null;
+    let status = "sent";
+    let errorMessage: string | null = null;
+    const graphUrl = `https://graph.facebook.com/${META_GRAPH_VERSION}/${row.channel_external_id}/messages`;
+    const graphResponse = await fetch(graphUrl, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${integration.access_token}`, "Content-Type": "application/json" },
+      body: JSON.stringify(messagePayload),
+    });
+    const graphData = (await graphResponse.json()) as { messages?: Array<{ id?: string }>; error?: { message?: string } };
+    if (!graphResponse.ok || !graphData.messages?.[0]?.id) {
+      status = "failed";
+      errorMessage = graphData.error?.message ?? "Falha ao enviar mensagem pela Meta.";
+      await recordEvent(user.tenant_id, "message", "meta.message_send_failed", { conversation_id: id, error: errorMessage }, user.id, null, requestId);
+    } else {
+      externalId = graphData.messages[0].id ?? null;
+    }
+
+    const saved = await query(
+      `insert into messages (tenant_id, conversation_id, external_id, direction, sender_name, body, message_type, metadata, status, idempotency_key, error_message, request_id, sent_at)
+       values ($1, $2, $3, 'outbound', $4, $5, 'text', $6, $7, $8, $9, $10, now())
+       returning id, conversation_id, external_id, direction, sender_name, sender_phone, body, message_type, status, sent_at, created_at, error_message, request_id`,
+      [
+        user.tenant_id,
+        id,
+        externalId,
+        user.name,
+        body.body,
+        JSON.stringify({ graph: graphData }),
+        status,
+        idempotencyKey,
+        errorMessage,
+        requestId,
+      ],
+    );
+
+    await query(
+      `update conversations
+       set status = case when $3 = 'failed' then status else 'open' end,
+           last_message_at = case when $3 = 'failed' then last_message_at else now() end,
+           last_agent_message_at = case when $3 = 'failed' then last_agent_message_at else now() end,
+           updated_at = now()
+       where tenant_id = $1 and id = $2`,
+      [user.tenant_id, id, status],
+    );
+    await recordEvent(user.tenant_id, "message", status === "failed" ? "message.outbound_failed" : "message.outbound_sent", { conversation_id: id, external_id: externalId }, user.id, saved.rows[0].id, requestId);
+
+    if (status === "failed") return reply.code(502).send({ error: errorMessage, message: saved.rows[0], requestId });
+    return { message: saved.rows[0], requestId };
   });
 
   app.post("/api/conversations/:id/archive", async (request, reply) => {
@@ -586,7 +771,12 @@ async function main() {
   app.get("/api/channels", async (request, reply) => {
     const user = await requireAuth(request, reply);
     if (!user) return;
-    const result = await query("select id, provider, external_id, display_name, phone_number, status, metadata, created_at, updated_at from channels where tenant_id = $1 order by updated_at desc", [
+    const result = await query(
+      `select id, provider, external_id, display_name, phone_number, status, metadata, team_name, last_sync_at, error_message, created_at, updated_at
+       from channels
+       where tenant_id = $1
+       order by updated_at desc`,
+      [
       user.tenant_id,
     ]);
     return { channels: result.rows };
@@ -757,26 +947,39 @@ async function main() {
     businessesUrl.searchParams.set("access_token", integration.access_token);
     const businessesResponse = await fetch(businessesUrl);
     const businessesData = (await businessesResponse.json()) as { data?: Array<{ id: string; name?: string }>; error?: { message?: string } };
-    if (!businessesResponse.ok) return reply.code(400).send({ error: businessesData.error?.message ?? "Falha ao listar negocios Meta." });
+    if (!businessesResponse.ok) {
+      const error = businessesData.error?.message ?? "Falha ao listar negocios Meta.";
+      await recordEvent(user.tenant_id, "channel", "meta.channels_sync_failed", { error }, user.id, null, (request as RequestWithId).requestId);
+      return reply.code(400).send({ error });
+    }
 
     const synced = [];
+    let created = 0;
+    let updated = 0;
     for (const business of businessesData.data ?? []) {
       const wabaUrl = new URL(`https://graph.facebook.com/${META_GRAPH_VERSION}/${business.id}/owned_whatsapp_business_accounts`);
       wabaUrl.searchParams.set("fields", "id,name,phone_numbers{id,display_phone_number,verified_name,code_verification_status,quality_rating}");
       wabaUrl.searchParams.set("access_token", integration.access_token);
       const wabaResponse = await fetch(wabaUrl);
       const wabaData = (await wabaResponse.json()) as {
+        error?: { message?: string };
         data?: Array<{
           id: string;
           name?: string;
           phone_numbers?: { data?: Array<{ id: string; display_phone_number?: string; verified_name?: string; code_verification_status?: string; quality_rating?: string }> };
         }>;
       };
-      if (!wabaResponse.ok) continue;
+      if (!wabaResponse.ok) {
+        await recordEvent(user.tenant_id, "channel", "meta.waba_sync_failed", { business_id: business.id, error: wabaData.error?.message ?? "Falha ao listar WABAs." }, user.id, null, (request as RequestWithId).requestId);
+        continue;
+      }
       for (const waba of wabaData.data ?? []) {
         for (const phone of waba.phone_numbers?.data ?? []) {
+          const exists = await query<{ id: string }>("select id from channels where tenant_id = $1 and provider = 'whatsapp' and external_id = $2", [user.tenant_id, phone.id]);
           const channelId = await upsertWhatsAppChannel(user.tenant_id, waba.id, { phone_number_id: phone.id, display_phone_number: phone.display_phone_number });
-          await query("update channels set metadata = metadata || $1::jsonb, updated_at = now() where id = $2", [
+          if (exists.rows[0]) updated += 1;
+          else created += 1;
+          await query("update channels set metadata = metadata || $1::jsonb, team_name = coalesce(team_name, $2), last_sync_at = now(), error_message = null, updated_at = now() where id = $3", [
             JSON.stringify({
               business_id: business.id,
               business_name: business.name ?? null,
@@ -785,6 +988,7 @@ async function main() {
               code_verification_status: phone.code_verification_status ?? null,
               quality_rating: phone.quality_rating ?? null,
             }),
+            business.name ?? null,
             channelId,
           ]);
           synced.push({ id: phone.id, displayPhoneNumber: phone.display_phone_number ?? null, verifiedName: phone.verified_name ?? null });
@@ -792,12 +996,8 @@ async function main() {
       }
     }
 
-    await query("insert into events (tenant_id, actor_user_id, entity_type, event_type, payload) values ($1, $2, 'channel', 'meta.channels_synced', $3)", [
-      user.tenant_id,
-      user.id,
-      JSON.stringify({ count: synced.length }),
-    ]);
-    return { channels: synced };
+    await recordEvent(user.tenant_id, "channel", "meta.channels_synced", { count: synced.length, created, updated }, user.id, null, (request as RequestWithId).requestId);
+    return { channels: synced, created, updated, total: synced.length };
   });
 
   app.get("/api/meta/webhook", async (request, reply) => {

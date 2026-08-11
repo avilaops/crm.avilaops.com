@@ -26,3 +26,4 @@ export type Page =
   | 'knowledge'
   | 'integrations'
   | 'lead-sources'
+  | 'channels'

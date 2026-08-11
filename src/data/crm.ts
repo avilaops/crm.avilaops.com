@@ -82,6 +82,7 @@ export const settingsItems = [
   ['IA', 'ai-settings', 'Configurações de IA'],
   ['IA', 'knowledge', 'Fontes de conhecimento'],
   ['Integrações e canais', 'integrations', 'Central de integrações'],
+  ['Integrações e canais', 'channels', 'Canais Meta'],
 ] as const
 
 export const integrations = [

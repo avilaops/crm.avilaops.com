@@ -28,6 +28,7 @@ export const pageToPath: Record<Page, string> = {
   knowledge: '/settings/ai/knowledge/',
   integrations: '/settings/integrations/',
   'lead-sources': '/settings/pipeline/leads/',
+  channels: '/settings/channels/',
 }
 
 const pathToPage = new Map<string, Page>(

@@ -88,6 +88,10 @@ create table if not exists channels (
   unique (tenant_id, provider, external_id)
 );
 
+alter table channels add column if not exists team_name text;
+alter table channels add column if not exists last_sync_at timestamptz;
+alter table channels add column if not exists error_message text;
+
 create table if not exists conversations (
   id uuid primary key default gen_random_uuid(),
   tenant_id uuid not null references tenants(id) on delete cascade,
@@ -114,10 +118,21 @@ create table if not exists messages (
   body text,
   message_type text not null default 'text',
   metadata jsonb not null default '{}'::jsonb,
+  status text not null default 'received',
+  idempotency_key text,
+  error_message text,
+  request_id text,
   sent_at timestamptz not null default now(),
   created_at timestamptz not null default now(),
   unique (tenant_id, external_id)
 );
+
+alter table messages add column if not exists status text not null default 'received';
+alter table messages add column if not exists idempotency_key text;
+alter table messages add column if not exists error_message text;
+alter table messages add column if not exists request_id text;
+
+create unique index if not exists messages_tenant_id_idempotency_key_idx on messages(tenant_id, idempotency_key) where idempotency_key is not null;
 
 create table if not exists tasks (
   id uuid primary key default gen_random_uuid(),
@@ -156,8 +171,11 @@ create table if not exists events (
   entity_id uuid,
   event_type text not null,
   payload jsonb not null default '{}'::jsonb,
+  request_id text,
   created_at timestamptz not null default now()
 );
+
+alter table events add column if not exists request_id text;
 
 insert into tenants (name, slug)
 values ('Avila Ops Tecnologia', 'avila-ops')

@@ -2,6 +2,7 @@ import { Check, CheckCircle2, MessageCircle, Music2, Plus } from 'lucide-react'
 import { useEffect, useState, type FormEvent } from 'react'
 import LeadSourceModal, { InstagramIcon, type LeadSource } from '../../components/modals/LeadSourceModal'
 import { integrations, settingsItems } from '../../data/crm'
+import { listChannels, syncMetaChannels, type CrmChannel } from '../../lib/crm'
 import { disconnectMeta, getMetaStatus, saveMetaCredentials, type MetaStatus } from '../../lib/meta'
 import type { Page } from '../../types'
 import { Topbar } from '../workspace/WorkspacePages'
@@ -32,7 +33,8 @@ function SettingsShell({ page, setPage, openKnowledge }: { page: Page; setPage: 
         {page === 'knowledge' && <Knowledge openKnowledge={openKnowledge} />}
         {page === 'integrations' && <IntegrationCenter />}
         {page === 'lead-sources' && <LeadSources />}
-        {!['profile-settings', 'billing', 'users', 'ai-settings', 'knowledge', 'integrations', 'lead-sources'].includes(page) && <GenericSettings title={settingsItems.find(([, id]) => id === page)?.[2] || 'Configurações'} />}
+        {page === 'channels' && <Channels />}
+        {!['profile-settings', 'billing', 'users', 'ai-settings', 'knowledge', 'integrations', 'lead-sources', 'channels'].includes(page) && <GenericSettings title={settingsItems.find(([, id]) => id === page)?.[2] || 'Configurações'} />}
       </section>
     </div>
   )
@@ -217,6 +219,91 @@ function IntegrationCenter() {
               <button className="mt-2 rounded border border-slate-200 px-2 py-1 text-xs">+ Instalar</button>
             </div>
           ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function Channels() {
+  const [channels, setChannels] = useState<CrmChannel[]>([])
+  const [loading, setLoading] = useState(true)
+  const [syncing, setSyncing] = useState(false)
+  const [message, setMessage] = useState('')
+  const [error, setError] = useState('')
+
+  const load = () => {
+    setLoading(true)
+    listChannels()
+      .then((result) => {
+        setChannels(result.channels)
+        setError('')
+      })
+      .catch((err: Error) => setError(err.message))
+      .finally(() => setLoading(false))
+  }
+
+  useEffect(() => {
+    load()
+  }, [])
+
+  async function handleSync() {
+    setSyncing(true)
+    setMessage('')
+    setError('')
+    try {
+      const result = await syncMetaChannels()
+      setMessage(`${result.total} canal(is) sincronizado(s): ${result.created} criado(s), ${result.updated} atualizado(s).`)
+      load()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setSyncing(false)
+    }
+  }
+
+  return (
+    <div>
+      <SettingsHeader title="Canais Meta" />
+      <div className="space-y-4 p-6">
+        <div className="flex flex-wrap items-center justify-between gap-3 bg-white p-5">
+          <div>
+            <h3 className="font-semibold">Números conectados</h3>
+            <p className="mt-1 text-sm text-slate-500">Sincronize os números do WhatsApp Business autorizados na conta Meta.</p>
+          </div>
+          <button className="rounded bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60" onClick={handleSync} disabled={syncing}>
+            {syncing ? 'Sincronizando...' : 'Sincronizar números da Meta'}
+          </button>
+        </div>
+        {message && <p className="rounded border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{message}</p>}
+        {error && <p className="rounded border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>}
+        <div className="overflow-auto bg-white">
+          <table className="min-w-[980px] w-full border-collapse text-sm">
+            <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
+              <tr>
+                {['Nome verificado', 'WhatsApp', 'phone_number_id', 'waba_id', 'Status', 'Qualidade', 'Última sincronização', 'Empresa/equipe', 'Erro'].map((column) => (
+                  <th key={column} className="border-b border-slate-200 px-4 py-3">{column}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {loading && <tr><td className="px-4 py-6 text-slate-400" colSpan={9}>Carregando canais...</td></tr>}
+              {!loading && channels.length === 0 && <tr><td className="px-4 py-6 text-slate-400" colSpan={9}>Nenhum número sincronizado.</td></tr>}
+              {channels.map((channel) => (
+                <tr key={channel.id} className="border-b border-slate-100">
+                  <td className="px-4 py-3 font-medium">{String(channel.metadata.verified_name ?? channel.display_name)}</td>
+                  <td className="px-4 py-3">{channel.phone_number ?? '-'}</td>
+                  <td className="px-4 py-3 font-mono text-xs">{channel.external_id ?? '-'}</td>
+                  <td className="px-4 py-3 font-mono text-xs">{String(channel.metadata.waba_id ?? '-')}</td>
+                  <td className="px-4 py-3"><span className="rounded bg-emerald-100 px-2 py-1 text-xs font-semibold text-emerald-700">{channel.status}</span></td>
+                  <td className="px-4 py-3">{String(channel.metadata.quality_rating ?? '-')}</td>
+                  <td className="px-4 py-3">{channel.last_sync_at ? new Date(channel.last_sync_at).toLocaleString('pt-BR') : '-'}</td>
+                  <td className="px-4 py-3">{channel.team_name ?? String(channel.metadata.business_name ?? '-')}</td>
+                  <td className="px-4 py-3 text-red-600">{channel.error_message ?? '-'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       </div>
     </div>
