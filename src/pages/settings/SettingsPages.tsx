@@ -239,7 +239,6 @@ function LeadSources() {
     getMetaStatus()
       .then((result) => {
         setStatus(result)
-        setAppId(result.appId)
       })
       .catch(() => setStatus(null))
       .finally(() => setLoadingStatus(false))
@@ -295,8 +294,8 @@ function LeadSources() {
                   ? 'Verificando configuração...'
                   : status?.connected
                     ? `Conectado como ${status.userName ?? 'conta Meta'}`
-                    : status?.configured
-                      ? 'App ID configurado. Ainda não conectado.'
+                      : status?.configured
+                      ? `App configurado (${status.appConfiguredHint ?? 'identificador oculto'}). Ainda não conectado.`
                       : 'Configure o App ID e o App Secret do app já publicado na Meta para liberar as fontes abaixo.'}
               </p>
             </div>
@@ -340,7 +339,7 @@ function LeadSources() {
                   type="password"
                   value={appSecret}
                   onChange={(event) => setAppSecret(event.target.value)}
-                  placeholder={status?.configured ? 'deixe em branco para manter o atual' : ''}
+                  placeholder={status?.configured ? 'deixe em branco para manter o atual' : 'obrigatório na primeira configuração'}
                 />
               </label>
               {credentialsError && <p className="text-sm text-red-600 sm:col-span-2">{credentialsError}</p>}

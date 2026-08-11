@@ -7,7 +7,7 @@ const LOGIN_TIMEOUT_MS = 5 * 60 * 1000;
 export type MetaStatus = {
   configured: boolean;
   connected: boolean;
-  appId: string;
+  appConfiguredHint: string | null;
   userName: string | null;
   connectedAt: string | null;
   tokenExpiresAt: string | null;

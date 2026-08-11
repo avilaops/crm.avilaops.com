@@ -1,5 +1,7 @@
-import { MessageCircle, MoreHorizontal, Plus, Search, X } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { Archive, MessageCircle, MoreHorizontal, Plus, Search, X } from 'lucide-react'
 import type { LeadSource } from '../../components/modals/LeadSourceModal'
+import { archiveConversation, listConversationMessages, listConversations, type CrmConversation, type CrmMessage } from '../../lib/crm'
 import type { Page } from '../../types'
 
 function Workspace({ page, setPage, openLeadSource }: { page: Page; setPage: (page: Page) => void; openLeadSource: (source: LeadSource) => void }) {
@@ -94,6 +96,44 @@ function Tutorial({ title, button, onClick }: { title: string; button: string; o
 }
 
 function ChatInbox({ openLeadSource }: { openLeadSource: (source: LeadSource) => void }) {
+  const [conversations, setConversations] = useState<CrmConversation[]>([])
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [messages, setMessages] = useState<CrmMessage[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    let active = true
+    listConversations()
+      .then((data) => {
+        if (!active) return
+        setConversations(data.conversations)
+        setSelectedId(data.conversations[0]?.id ?? null)
+      })
+      .catch((err: Error) => active && setError(err.message))
+      .finally(() => active && setLoading(false))
+    return () => {
+      active = false
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!selectedId) {
+      setMessages([])
+      return
+    }
+    let active = true
+    listConversationMessages(selectedId)
+      .then((data) => active && setMessages(data.messages))
+      .catch((err: Error) => active && setError(err.message))
+    return () => {
+      active = false
+    }
+  }, [selectedId])
+
+  const selected = conversations.find((conversation) => conversation.id === selectedId) ?? null
+  const waitingCount = conversations.filter((conversation) => conversation.status === 'waiting').length
+
   return (
     <div>
       <Topbar title="Caixa de entrada" />
@@ -101,7 +141,8 @@ function ChatInbox({ openLeadSource }: { openLeadSource: (source: LeadSource) =>
         <aside className="border-r border-slate-200 bg-white">
           <div className="border-b border-slate-200 p-4">
             <span className="rounded bg-lime-100 px-2 py-1 text-xs text-lime-700">Conversas abertas</span>
-            <span className="float-right text-xs text-slate-400">Total: 0</span>
+            <span className="float-right text-xs text-slate-400">Total: {conversations.length}</span>
+            {waitingCount > 0 && <p className="mt-2 text-xs font-semibold text-amber-600">{waitingCount} cliente(s) aguardando resposta</p>}
           </div>
           <button className="flex w-full gap-4 border-b border-slate-100 p-4 text-left" onClick={() => openLeadSource('whatsapp')}>
             <span className="grid h-11 w-11 place-items-center rounded-full border border-dashed border-slate-400">
@@ -112,22 +153,94 @@ function ChatInbox({ openLeadSource }: { openLeadSource: (source: LeadSource) =>
               <span className="text-sm text-slate-500">Capture leads do WhatsApp & mais!</span>
             </span>
           </button>
-          <p className="p-8 text-center text-sm text-slate-400">Nenhuma conversa encontrada</p>
-        </aside>
-        <section className="relative grid place-items-center bg-slate-50">
-          <div className="max-w-lg text-center text-slate-600">
-            <p>Conecte seus canais para receber e responder a todas as mensagens em um só lugar.</p>
-            <div className="mt-5 flex flex-wrap justify-center gap-2">
-              <button className="rounded border border-slate-200 bg-white px-3 py-2 text-sm font-semibold" onClick={() => openLeadSource('whatsapp')}>Conectar WhatsApp</button>
-              <button className="rounded border border-slate-200 bg-white px-3 py-2 text-sm font-semibold">Conectar TikTok</button>
-              <button className="rounded border border-slate-200 bg-white px-3 py-2 text-sm font-semibold" onClick={() => openLeadSource('instagram')}>Conectar Instagram</button>
-              <button className="rounded border border-slate-200 bg-white px-3 py-2 text-sm font-semibold">Conectar Facebook</button>
-            </div>
+          {loading && <p className="p-8 text-center text-sm text-slate-400">Carregando conversas...</p>}
+          {error && <p className="p-4 text-sm text-red-500">{error}</p>}
+          {!loading && conversations.length === 0 && <p className="p-8 text-center text-sm text-slate-400">Nenhuma conversa encontrada</p>}
+          <div className="divide-y divide-slate-100">
+            {conversations.map((conversation) => (
+              <button
+                key={conversation.id}
+                className={`block w-full p-4 text-left ${conversation.id === selectedId ? 'bg-blue-50' : 'hover:bg-slate-50'}`}
+                onClick={() => setSelectedId(conversation.id)}
+              >
+                <div className="flex items-start gap-3">
+                  <div className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-slate-200 text-xs font-bold">
+                    {(conversation.contact_name ?? conversation.contact_phone ?? '?').slice(0, 2).toUpperCase()}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="truncate font-semibold">{conversation.contact_name ?? conversation.contact_phone ?? 'Contato sem nome'}</p>
+                      <StatusPill status={conversation.status} />
+                    </div>
+                    <p className="truncate text-sm text-slate-500">{conversation.channel_name ?? 'WhatsApp'} {conversation.channel_phone ? `- ${conversation.channel_phone}` : ''}</p>
+                    <p className="mt-1 text-xs text-slate-400">
+                      {conversation.unassigned ? 'Sem responsável' : conversation.assigned_user_name ?? 'Responsável definido'}
+                      {conversation.waiting_seconds > 0 ? ` · aguardando ${formatWait(conversation.waiting_seconds)}` : ''}
+                    </p>
+                  </div>
+                </div>
+              </button>
+            ))}
           </div>
+        </aside>
+        <section className="relative bg-slate-50">
+          {!selected ? (
+            <div className="grid h-full place-items-center">
+              <div className="max-w-lg text-center text-slate-600">
+                <p>Conecte seus canais para receber e responder a todas as mensagens em um só lugar.</p>
+                <div className="mt-5 flex flex-wrap justify-center gap-2">
+                  <button className="rounded border border-slate-200 bg-white px-3 py-2 text-sm font-semibold" onClick={() => openLeadSource('whatsapp')}>Conectar WhatsApp</button>
+                  <button className="rounded border border-slate-200 bg-white px-3 py-2 text-sm font-semibold">Conectar TikTok</button>
+                  <button className="rounded border border-slate-200 bg-white px-3 py-2 text-sm font-semibold" onClick={() => openLeadSource('instagram')}>Conectar Instagram</button>
+                  <button className="rounded border border-slate-200 bg-white px-3 py-2 text-sm font-semibold">Conectar Facebook</button>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="flex h-full flex-col">
+              <div className="flex h-16 items-center justify-between border-b border-slate-200 bg-white px-5">
+                <div>
+                  <h3 className="font-semibold">{selected.contact_name ?? selected.contact_phone ?? 'Contato'}</h3>
+                  <p className="text-xs text-slate-500">{selected.channel_name ?? 'WhatsApp'} · {selected.status}</p>
+                </div>
+                <button
+                  className="inline-flex items-center gap-2 rounded border border-slate-200 px-3 py-2 text-sm font-semibold"
+                  onClick={() => archiveConversation(selected.id).then(() => setConversations((items) => items.map((item) => item.id === selected.id ? { ...item, status: 'archived' } : item)))}
+                >
+                  <Archive size={15} />
+                  Arquivar
+                </button>
+              </div>
+              <div className="flex-1 space-y-3 overflow-auto p-5">
+                {messages.length === 0 && <p className="mt-12 text-center text-sm text-slate-400">Nenhuma mensagem gravada para esta conversa.</p>}
+                {messages.map((message) => (
+                  <div key={message.id} className={`flex ${message.direction === 'inbound' ? 'justify-start' : 'justify-end'}`}>
+                    <div className={`max-w-[72%] rounded px-4 py-3 text-sm shadow-sm ${message.direction === 'inbound' ? 'bg-white' : 'bg-blue-600 text-white'}`}>
+                      <p>{message.body}</p>
+                      <p className={`mt-2 text-xs ${message.direction === 'inbound' ? 'text-slate-400' : 'text-blue-100'}`}>{new Date(message.sent_at).toLocaleString('pt-BR')}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </section>
       </div>
     </div>
   )
+}
+
+function StatusPill({ status }: { status: string }) {
+  const label = status === 'waiting' ? 'Aguardando' : status === 'archived' ? 'Arquivado' : 'Aberto'
+  const color = status === 'waiting' ? 'bg-amber-100 text-amber-700' : status === 'archived' ? 'bg-slate-100 text-slate-600' : 'bg-emerald-100 text-emerald-700'
+  return <span className={`shrink-0 rounded px-2 py-0.5 text-xs font-semibold ${color}`}>{label}</span>
+}
+
+function formatWait(seconds: number) {
+  if (seconds < 60) return `${seconds}s`
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) return `${minutes}min`
+  return `${Math.floor(minutes / 60)}h`
 }
 
 function TeamChat() {
