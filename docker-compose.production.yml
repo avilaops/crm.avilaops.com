@@ -9,12 +9,6 @@ services:
         condition: service_healthy
     env_file:
       - .env.production.local
-    environment:
-      DATABASE_URL: ${DATABASE_URL}
-      PORT: ${PORT:-3000}
-      DEFAULT_TENANT_SLUG: ${DEFAULT_TENANT_SLUG:-avila-ops}
-      SETUP_TOKEN: ${SETUP_TOKEN}
-      META_WEBHOOK_VERIFY_TOKEN: ${META_WEBHOOK_VERIFY_TOKEN}
     ports:
       - "127.0.0.1:3020:3000"
     networks:
@@ -24,10 +18,11 @@ services:
     image: postgres:16-alpine
     container_name: agenda-crm-db
     restart: unless-stopped
+    env_file:
+      - .env.production.local
     environment:
       POSTGRES_DB: agenda_crm
       POSTGRES_USER: agenda_crm
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
       - agenda-crm-postgres:/var/lib/postgresql/data
     healthcheck:
