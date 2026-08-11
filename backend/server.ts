@@ -75,11 +75,16 @@ async function ensureInitialAdminPassword() {
   if (!password) return;
   const tenantId = await getTenantId();
   const passwordHash = await hashPassword(password);
-  await query("update users set password_hash = coalesce(password_hash, $1) where tenant_id = $2 and email = $3", [
-    passwordHash,
-    tenantId,
-    "nicolasrosaab@gmail.com",
-  ]);
+  try {
+    await query("update users set password_hash = coalesce(password_hash, $1) where tenant_id = $2 and email = $3", [
+      passwordHash,
+      tenantId,
+      "nicolasrosaab@gmail.com",
+    ]);
+  } catch (error) {
+    if (typeof error === "object" && error && "code" in error && error.code === "42703") return;
+    throw error;
+  }
 }
 
 async function getSessionUser(cookieHeader?: string): Promise<AuthUser | null> {
