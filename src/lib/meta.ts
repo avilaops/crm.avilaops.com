@@ -1,6 +1,7 @@
 const WORKER_BASE_URL =
   (import.meta.env.VITE_META_WORKER_URL as string | undefined) ||
-  "https://agenda-meta-oauth.nicolas-85b.workers.dev";
+  (import.meta.env.VITE_API_BASE_URL as string | undefined) ||
+  "/api/meta";
 const LOGIN_TIMEOUT_MS = 5 * 60 * 1000;
 
 export type MetaStatus = {

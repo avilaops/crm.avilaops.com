@@ -1,0 +1,176 @@
+create extension if not exists pgcrypto;
+
+create table if not exists tenants (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  slug text not null unique,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists users (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null references tenants(id) on delete cascade,
+  name text not null,
+  email text not null,
+  role text not null default 'admin',
+  created_at timestamptz not null default now(),
+  unique (tenant_id, email)
+);
+
+create table if not exists contacts (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null references tenants(id) on delete cascade,
+  name text not null,
+  email text,
+  phone text,
+  company text,
+  source text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (tenant_id, phone)
+);
+
+create table if not exists pipelines (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null references tenants(id) on delete cascade,
+  name text not null,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists pipeline_stages (
+  id uuid primary key default gen_random_uuid(),
+  pipeline_id uuid not null references pipelines(id) on delete cascade,
+  name text not null,
+  position int not null,
+  color text not null default '#3b82f6',
+  unique (pipeline_id, position)
+);
+
+create table if not exists leads (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null references tenants(id) on delete cascade,
+  contact_id uuid references contacts(id) on delete set null,
+  stage_id uuid references pipeline_stages(id) on delete set null,
+  title text not null,
+  value_cents int not null default 0,
+  status text not null default 'open',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists channels (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null references tenants(id) on delete cascade,
+  provider text not null,
+  external_id text,
+  display_name text not null,
+  phone_number text,
+  status text not null default 'pending',
+  metadata jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (tenant_id, provider, external_id)
+);
+
+create table if not exists conversations (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null references tenants(id) on delete cascade,
+  channel_id uuid references channels(id) on delete set null,
+  contact_id uuid references contacts(id) on delete set null,
+  assigned_user_id uuid references users(id) on delete set null,
+  status text not null default 'open',
+  archived_at timestamptz,
+  last_message_at timestamptz,
+  last_customer_message_at timestamptz,
+  last_agent_message_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists messages (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null references tenants(id) on delete cascade,
+  conversation_id uuid not null references conversations(id) on delete cascade,
+  external_id text,
+  direction text not null,
+  sender_name text,
+  sender_phone text,
+  body text,
+  message_type text not null default 'text',
+  metadata jsonb not null default '{}'::jsonb,
+  sent_at timestamptz not null default now(),
+  created_at timestamptz not null default now(),
+  unique (tenant_id, external_id)
+);
+
+create table if not exists tasks (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null references tenants(id) on delete cascade,
+  contact_id uuid references contacts(id) on delete set null,
+  lead_id uuid references leads(id) on delete set null,
+  assigned_user_id uuid references users(id) on delete set null,
+  title text not null,
+  due_at timestamptz,
+  status text not null default 'open',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists integrations (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null references tenants(id) on delete cascade,
+  provider text not null,
+  app_id text,
+  app_secret text,
+  access_token text,
+  user_name text,
+  token_expires_at timestamptz,
+  metadata jsonb not null default '{}'::jsonb,
+  connected_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (tenant_id, provider)
+);
+
+create table if not exists events (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid references tenants(id) on delete cascade,
+  actor_user_id uuid references users(id) on delete set null,
+  entity_type text not null,
+  entity_id uuid,
+  event_type text not null,
+  payload jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now()
+);
+
+insert into tenants (name, slug)
+values ('Avila Ops Tecnologia', 'avila-ops')
+on conflict (slug) do nothing;
+
+insert into users (tenant_id, name, email, role)
+select id, 'Nicolas Rosa', 'nicolasrosaab@gmail.com', 'admin'
+from tenants
+where slug = 'avila-ops'
+on conflict (tenant_id, email) do nothing;
+
+insert into pipelines (tenant_id, name)
+select id, 'Funil de vendas'
+from tenants
+where slug = 'avila-ops'
+and not exists (
+  select 1 from pipelines p where p.tenant_id = tenants.id and p.name = 'Funil de vendas'
+);
+
+insert into pipeline_stages (pipeline_id, name, position, color)
+select p.id, stage.name, stage.position, stage.color
+from pipelines p
+join tenants t on t.id = p.tenant_id
+cross join (
+  values
+    ('Leads de entrada', 1, '#fde047'),
+    ('Decidindo', 2, '#a855f7'),
+    ('Discussao de contrato', 3, '#84cc16'),
+    ('Decisao final', 4, '#3b82f6')
+) as stage(name, position, color)
+where t.slug = 'avila-ops'
+on conflict (pipeline_id, position) do nothing;
