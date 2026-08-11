@@ -230,6 +230,7 @@ function LeadSources() {
   const [showCredentials, setShowCredentials] = useState(false)
   const [appId, setAppId] = useState('')
   const [appSecret, setAppSecret] = useState('')
+  const [setupToken, setSetupToken] = useState(() => sessionStorage.getItem('agenda-meta-setup-token') ?? '')
   const [savingCredentials, setSavingCredentials] = useState(false)
   const [credentialsError, setCredentialsError] = useState('')
   const [disconnecting, setDisconnecting] = useState(false)
@@ -249,7 +250,8 @@ function LeadSources() {
     setSavingCredentials(true)
     setCredentialsError('')
     try {
-      const result = await saveMetaCredentials(appId, appSecret)
+      sessionStorage.setItem('agenda-meta-setup-token', setupToken)
+      const result = await saveMetaCredentials(appId, appSecret, setupToken)
       setStatus(result)
       setAppSecret('')
       setShowCredentials(false)
@@ -263,7 +265,8 @@ function LeadSources() {
   async function handleDisconnect() {
     setDisconnecting(true)
     try {
-      setStatus(await disconnectMeta())
+      sessionStorage.setItem('agenda-meta-setup-token', setupToken)
+      setStatus(await disconnectMeta(setupToken))
     } finally {
       setDisconnecting(false)
     }
@@ -315,6 +318,17 @@ function LeadSources() {
 
           {showCredentials && (
             <form className="mt-4 grid gap-3 border-t border-slate-100 pt-4 sm:grid-cols-2" onSubmit={handleSaveCredentials}>
+              <label className="grid gap-1 text-sm sm:col-span-2">
+                <span className="text-slate-600">Token administrativo</span>
+                <input
+                  className="input"
+                  type="password"
+                  value={setupToken}
+                  onChange={(event) => setSetupToken(event.target.value)}
+                  placeholder="token de configuração do Worker"
+                  required
+                />
+              </label>
               <label className="grid gap-1 text-sm">
                 <span className="text-slate-600">App ID</span>
                 <input className="input" value={appId} onChange={(event) => setAppId(event.target.value)} placeholder="000000000000000" required />

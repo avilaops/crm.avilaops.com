@@ -1,6 +1,7 @@
 export interface Env {
   META_KV: KVNamespace;
   ALLOWED_ORIGINS?: string;
+  SETUP_TOKEN?: string;
 }
 
 const META_GRAPH_VERSION = "v23.0";
@@ -36,7 +37,7 @@ function corsHeaders(origin: string | null, env: Env): Record<string, string> {
   return {
     "Access-Control-Allow-Origin": allowOrigin,
     "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type",
+    "Access-Control-Allow-Headers": "Content-Type,X-Setup-Token",
     Vary: "Origin",
   };
 }
@@ -79,6 +80,12 @@ function metaErrorMessage(value: unknown, fallback: string): string {
     if (error && typeof error.message === "string") return error.message;
   }
   return fallback;
+}
+
+function hasValidSetupToken(request: Request, env: Env): boolean {
+  if (!env.SETUP_TOKEN) return false;
+  const token = request.headers.get("X-Setup-Token") ?? "";
+  return token.length > 0 && token === env.SETUP_TOKEN;
 }
 
 async function exchangeCode(appId: string, appSecret: string, code: string, redirectUri: string) {
@@ -131,6 +138,10 @@ export default {
       }
 
       if (url.pathname === "/credentials" && request.method === "POST") {
+        if (!hasValidSetupToken(request, env)) {
+          return json({ error: "Token administrativo inválido." }, origin, env, 401);
+        }
+
         const body = (await request.json()) as { appId?: string; appSecret?: string };
         const appId = (body.appId ?? "").trim();
         const appSecret = (body.appSecret ?? "").trim();
@@ -196,6 +207,10 @@ export default {
       }
 
       if (url.pathname === "/disconnect" && request.method === "POST") {
+        if (!hasValidSetupToken(request, env)) {
+          return json({ error: "Token administrativo inválido." }, origin, env, 401);
+        }
+
         await env.META_KV.delete(CONNECTION_KEY);
         return json(await buildStatus(env), origin, env);
       }

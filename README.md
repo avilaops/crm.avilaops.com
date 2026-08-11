@@ -67,7 +67,8 @@ Antes de publicar o Worker:
 1. Criar um KV namespace no Cloudflare.
 2. Substituir `REPLACE_WITH_KV_NAMESPACE_ID` em `worker/wrangler.toml`.
 3. Configurar `ALLOWED_ORIGINS` para os domínios autorizados.
-4. Publicar com `npm run deploy` dentro da pasta `worker`.
+4. Configurar o secret `SETUP_TOKEN` com `wrangler secret put SETUP_TOKEN`.
+5. Publicar com `npm run deploy` dentro da pasta `worker`.
 
 ## Próximo passo para multi-tenant
 

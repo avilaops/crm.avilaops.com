@@ -29,15 +29,19 @@ export function getMetaStatus() {
   return fetchJson<MetaStatus>("/status");
 }
 
-export function saveMetaCredentials(appId: string, appSecret: string) {
+export function saveMetaCredentials(appId: string, appSecret: string, setupToken: string) {
   return fetchJson<MetaStatus>("/credentials", {
     method: "POST",
+    headers: { "X-Setup-Token": setupToken },
     body: JSON.stringify({ appId, appSecret }),
   });
 }
 
-export function disconnectMeta() {
-  return fetchJson<MetaStatus>("/disconnect", { method: "POST" });
+export function disconnectMeta(setupToken: string) {
+  return fetchJson<MetaStatus>("/disconnect", {
+    method: "POST",
+    headers: { "X-Setup-Token": setupToken },
+  });
 }
 
 export function connectMeta(): Promise<MetaStatus> {
