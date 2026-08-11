@@ -3,7 +3,7 @@ main = "src/index.ts"
 compatibility_date = "2026-08-11"
 
 kv_namespaces = [
-  { binding = "META_KV", id = "REPLACE_WITH_KV_NAMESPACE_ID" }
+  { binding = "META_KV", id = "561922880544489dae265c1c8a31ac8e" }
 ]
 
 [vars]

@@ -60,7 +60,7 @@ No frontend, use `.env.local` com:
 VITE_META_WORKER_URL=http://localhost:8787
 ```
 
-Em produção no GitHub Pages, configure a repository variable `VITE_META_WORKER_URL` com a URL publicada do Worker. Não commitar `.env.production`; ele contém segredos.
+Em produção no GitHub Pages, o frontend usa por padrão `https://agenda-meta-oauth.nicolas-85b.workers.dev`. Se a URL mudar, configure `VITE_META_WORKER_URL` no ambiente de build. Não commitar `.env.production`; ele contém segredos.
 
 Antes de publicar o Worker:
 
