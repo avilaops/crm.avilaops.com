@@ -74,12 +74,17 @@ if (!published) {
   });
 }
 
+let registryConfirmed = false;
+
 for (let attempt = 1; attempt <= 10; attempt += 1) {
   if (await packageVersionExists(packageJson.name, packageJson.version)) {
     console.log(`Publicado: https://www.npmjs.com/package/${packageJson.name}`);
-    process.exit(0);
+    registryConfirmed = true;
+    break;
   }
   await new Promise((resolvePromise) => setTimeout(resolvePromise, 2000));
 }
 
-throw new Error("O npm aceitou a publicacao, mas a versao ainda nao apareceu no registry.");
+if (!registryConfirmed) {
+  throw new Error("O npm aceitou a publicacao, mas a versao ainda nao apareceu no registry.");
+}
