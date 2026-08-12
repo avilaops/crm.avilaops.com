@@ -47,6 +47,8 @@ export type CrmUser = {
   name: string
   email: string
   role: string
+  active: boolean
+  created_at: string
 }
 
 export type CrmContact = {
@@ -120,6 +122,26 @@ function toQuery(filters?: ConversationFilters) {
 
 export function bootstrap() {
   return api<{ users: CrmUser[] }>('/api/bootstrap')
+}
+
+export function listUsers() {
+  return api<{ users: CrmUser[] }>('/api/users')
+}
+
+export function createUser(input: { name: string; email: string; role: string; password?: string }) {
+  return api<{ user: CrmUser }>('/api/users', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  })
+}
+
+export function updateUser(userId: string, input: Partial<{ name: string; email: string; role: string; active: boolean; password: string }>) {
+  return api<{ user: CrmUser }>(`/api/users/${userId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  })
 }
 
 export function listConversations(filters?: ConversationFilters) {

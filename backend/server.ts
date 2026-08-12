@@ -369,6 +369,21 @@ const loginSchema = z.object({
   password: z.string().min(8),
 });
 
+const createUserSchema = z.object({
+  name: z.string().trim().min(2).max(120),
+  email: z.string().trim().email(),
+  role: z.enum(["admin", "gerente", "atendente"]).default("atendente"),
+  password: z.string().min(8).max(120).optional(),
+});
+
+const updateUserSchema = z.object({
+  name: z.string().trim().min(2).max(120).optional(),
+  email: z.string().trim().email().optional(),
+  role: z.enum(["admin", "gerente", "atendente"]).optional(),
+  active: z.boolean().optional(),
+  password: z.string().min(8).max(120).optional(),
+});
+
 const assignSchema = z.object({
   userId: z.string().uuid().nullable(),
 });
@@ -469,7 +484,7 @@ async function main() {
       `select u.id, u.tenant_id, u.name, u.email, u.role, u.password_hash
        from users u
        join tenants t on t.id = u.tenant_id
-       where lower(u.email) = lower($1) and t.slug = $2`,
+       where lower(u.email) = lower($1) and t.slug = $2 and u.active = true`,
       [body.email, DEFAULT_TENANT_SLUG],
     );
     const user = result.rows[0];
@@ -515,7 +530,7 @@ async function main() {
     const tenantId = user.tenant_id;
     const [tenant, users, contacts, channels, conversations, messages, leads] = await Promise.all([
       query("select id, name, slug, created_at from tenants where id = $1", [tenantId]),
-      query("select id, name, email, role, created_at from users where tenant_id = $1 order by created_at", [tenantId]),
+      query("select id, name, email, role, active, created_at from users where tenant_id = $1 order by created_at", [tenantId]),
       query("select id, name, email, phone, company, source, created_at from contacts where tenant_id = $1 order by created_at desc limit 50", [tenantId]),
       query("select id, provider, external_id, display_name, phone_number, status, metadata, created_at from channels where tenant_id = $1 order by created_at desc", [tenantId]),
       query("select id, channel_id, contact_id, assigned_user_id, status, archived_at, last_message_at, last_customer_message_at, last_agent_message_at, created_at from conversations where tenant_id = $1 order by coalesce(last_message_at, created_at) desc limit 50", [tenantId]),
@@ -533,6 +548,75 @@ async function main() {
       messages: messages.rows,
       leads: leads.rows,
     };
+  });
+
+  app.get("/api/users", async (request, reply) => {
+    const user = await requireAuth(request, reply);
+    if (!user) return;
+    const result = await query(
+      `select id, name, email, role, active, created_at
+       from users
+       where tenant_id = $1
+       order by created_at asc`,
+      [user.tenant_id],
+    );
+    return { users: result.rows };
+  });
+
+  app.post("/api/users", async (request, reply) => {
+    const user = await requireAuth(request, reply);
+    if (!user) return;
+    if (!canManage(user)) return reply.code(403).send({ error: "Permissao insuficiente." });
+    const body = createUserSchema.parse(request.body);
+    const passwordHash = body.password ? await hashPassword(body.password) : null;
+    try {
+      const result = await query(
+        `insert into users (tenant_id, name, email, role, password_hash, active)
+         values ($1, $2, lower($3), $4, $5, true)
+         returning id, name, email, role, active, created_at`,
+        [user.tenant_id, body.name, body.email, body.role, passwordHash],
+      );
+      await recordEvent(user.tenant_id, "user", "user.created", { email: body.email, role: body.role }, user.id, result.rows[0].id, (request as RequestWithId).requestId);
+      return reply.code(201).send({ user: result.rows[0] });
+    } catch (error) {
+      if (typeof error === "object" && error && "code" in error && error.code === "23505") {
+        return reply.code(409).send({ error: "Ja existe um usuario com este email." });
+      }
+      throw error;
+    }
+  });
+
+  app.patch("/api/users/:id", async (request, reply) => {
+    const user = await requireAuth(request, reply);
+    if (!user) return;
+    if (!canManage(user)) return reply.code(403).send({ error: "Permissao insuficiente." });
+    const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+    const body = updateUserSchema.parse(request.body);
+    if (id === user.id && body.active === false) return reply.code(400).send({ error: "Voce nao pode desativar sua propria conta." });
+    if (id === user.id && body.role && body.role !== user.role) return reply.code(400).send({ error: "Voce nao pode alterar seu proprio papel." });
+
+    const passwordHash = body.password ? await hashPassword(body.password) : undefined;
+    try {
+      const result = await query(
+        `update users
+         set name = coalesce($3, name),
+             email = coalesce(lower($4), email),
+             role = coalesce($5, role),
+             active = coalesce($6, active),
+             password_hash = coalesce($7, password_hash)
+         where tenant_id = $1 and id = $2
+         returning id, name, email, role, active, created_at`,
+        [user.tenant_id, id, body.name ?? null, body.email ?? null, body.role ?? null, body.active ?? null, passwordHash ?? null],
+      );
+      if (!result.rows[0]) return reply.code(404).send({ error: "Usuario nao encontrado." });
+      await recordEvent(user.tenant_id, "user", "user.updated", { fields: Object.keys(body).filter((field) => field !== "password") }, user.id, id, (request as RequestWithId).requestId);
+      return { user: result.rows[0] };
+    } catch (error) {
+      if (typeof error === "object" && error && "code" in error && error.code === "23505") {
+        return reply.code(409).send({ error: "Ja existe um usuario com este email." });
+      }
+      throw error;
+    }
   });
 
   app.get("/api/meta/status", async (request, reply) => {

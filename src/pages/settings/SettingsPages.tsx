@@ -2,7 +2,7 @@ import { Check, CheckCircle2, MessageCircle, Music2, Plus } from 'lucide-react'
 import { useEffect, useState, type FormEvent } from 'react'
 import LeadSourceModal, { InstagramIcon, type LeadSource } from '../../components/modals/LeadSourceModal'
 import { integrations, settingsItems } from '../../data/crm'
-import { listChannels, syncMetaChannels, type CrmChannel } from '../../lib/crm'
+import { createUser, listChannels, listUsers, syncMetaChannels, updateUser, type CrmChannel, type CrmUser } from '../../lib/crm'
 import { disconnectMeta, getMetaStatus, saveMetaCredentials, type MetaStatus } from '../../lib/meta'
 import type { Page } from '../../types'
 import { Topbar } from '../workspace/WorkspacePages'
@@ -159,17 +159,130 @@ function UsageTab() {
 }
 
 function Users() {
+  const [users, setUsers] = useState<CrmUser[]>([])
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const [message, setMessage] = useState('')
+  const [form, setForm] = useState({ name: '', email: '', role: 'atendente', password: '' })
+
+  const load = () => {
+    setLoading(true)
+    listUsers()
+      .then((result) => {
+        setUsers(result.users)
+        setError('')
+      })
+      .catch((err: Error) => setError(err.message))
+      .finally(() => setLoading(false))
+  }
+
+  useEffect(() => {
+    load()
+  }, [])
+
+  async function handleCreateUser(event: FormEvent) {
+    event.preventDefault()
+    setSaving(true)
+    setMessage('')
+    setError('')
+    try {
+      await createUser({
+        name: form.name,
+        email: form.email,
+        role: form.role,
+        password: form.password || undefined,
+      })
+      setForm({ name: '', email: '', role: 'atendente', password: '' })
+      setMessage('Usuário criado com sucesso.')
+      load()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Não foi possível criar o usuário.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function handleUpdateUser(userId: string, input: Partial<{ role: string; active: boolean }>) {
+    setMessage('')
+    setError('')
+    try {
+      const result = await updateUser(userId, input)
+      setUsers((current) => current.map((user) => (user.id === userId ? result.user : user)))
+      setMessage('Usuário atualizado.')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Não foi possível atualizar o usuário.')
+    }
+  }
+
   return (
     <div>
-      <Topbar title="Gestão de usuários" action="+ Adicionar usuário" />
-      <div className="p-5">
-        <div className="grid grid-cols-[1.2fr_1fr_1.2fr_1fr_1fr_1fr] bg-white text-sm">
-          {['Nome', 'Grupo', 'E-mail', 'Leads', 'Contatos', 'Status'].map((col) => <div key={col} className="border-b border-r border-slate-100 p-3 text-xs font-bold uppercase text-slate-400">{col}</div>)}
-          {['Nicolas Rosa', 'Seção de vendas', 'nicolasrosaab@gmail.com', 'Administrador', 'Administrador', 'Ativo'].map((cell) => <div key={cell} className="border-b border-r border-slate-100 p-3">{cell}</div>)}
+      <Topbar title="Gestão de usuários" action="Configurações do grupo" />
+      <div className="space-y-5 p-5">
+        <form className="grid gap-3 bg-white p-5 text-sm lg:grid-cols-[1fr_1fr_180px_180px_auto]" onSubmit={handleCreateUser}>
+          <input className="input" value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} placeholder="Nome do usuário" required />
+          <input className="input" type="email" value={form.email} onChange={(event) => setForm((current) => ({ ...current, email: event.target.value }))} placeholder="email@empresa.com" required />
+          <select className="input" value={form.role} onChange={(event) => setForm((current) => ({ ...current, role: event.target.value }))}>
+            <option value="atendente">Atendente</option>
+            <option value="gerente">Gerente</option>
+            <option value="admin">Administrador</option>
+          </select>
+          <input className="input" type="password" value={form.password} onChange={(event) => setForm((current) => ({ ...current, password: event.target.value }))} placeholder="Senha inicial" />
+          <button className="rounded bg-blue-600 px-4 py-2 font-semibold text-white disabled:opacity-60" disabled={saving}>{saving ? 'Salvando...' : '+ Adicionar usuário'}</button>
+        </form>
+
+        {message && <p className="rounded border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{message}</p>}
+        {error && <p className="rounded border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>}
+
+        <div className="overflow-auto bg-white text-sm">
+          <table className="min-w-[920px] w-full border-collapse">
+            <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
+              <tr>
+                {['Nome', 'E-mail', 'Papel', 'Leads', 'Contatos', 'Empresas', 'Status', 'Criado em', 'Ações'].map((col) => <th key={col} className="border-b border-slate-200 px-4 py-3">{col}</th>)}
+              </tr>
+            </thead>
+            <tbody>
+              {loading && <tr><td className="px-4 py-6 text-slate-400" colSpan={9}>Carregando usuários...</td></tr>}
+              {!loading && users.length === 0 && <tr><td className="px-4 py-6 text-slate-400" colSpan={9}>Nenhum usuário cadastrado.</td></tr>}
+              {users.map((user) => (
+                <tr key={user.id} className="border-b border-slate-100">
+                  <td className="px-4 py-3 font-medium text-blue-700">{user.name}</td>
+                  <td className="px-4 py-3">{user.email}</td>
+                  <td className="px-4 py-3">
+                    <select className="rounded border border-slate-200 px-2 py-1 text-xs" value={user.role} onChange={(event) => handleUpdateUser(user.id, { role: event.target.value })}>
+                      <option value="atendente">Atendente</option>
+                      <option value="gerente">Gerente</option>
+                      <option value="admin">Administrador</option>
+                    </select>
+                  </td>
+                  <td className="px-4 py-3">{roleLabel(user.role)}</td>
+                  <td className="px-4 py-3">{roleLabel(user.role)}</td>
+                  <td className="px-4 py-3">{roleLabel(user.role)}</td>
+                  <td className="px-4 py-3">
+                    <span className={`rounded px-2 py-1 text-xs font-semibold ${user.active ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
+                      {user.active ? 'Ativo' : 'Inativo'}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3">{new Date(user.created_at).toLocaleDateString('pt-BR')}</td>
+                  <td className="px-4 py-3">
+                    <button className="rounded border border-slate-200 px-3 py-1 text-xs font-semibold" onClick={() => handleUpdateUser(user.id, { active: !user.active })}>
+                      {user.active ? 'Desativar' : 'Ativar'}
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       </div>
     </div>
   )
+}
+
+function roleLabel(role: string) {
+  if (role === 'admin') return 'Administrador'
+  if (role === 'gerente' || role === 'manager') return 'Gerente'
+  return 'Atendente'
 }
 
 function AISettings() {

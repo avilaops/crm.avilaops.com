@@ -14,11 +14,13 @@ create table if not exists users (
   email text not null,
   password_hash text,
   role text not null default 'admin',
+  active boolean not null default true,
   created_at timestamptz not null default now(),
   unique (tenant_id, email)
 );
 
 alter table users add column if not exists password_hash text;
+alter table users add column if not exists active boolean not null default true;
 
 create table if not exists sessions (
   id uuid primary key default gen_random_uuid(),
