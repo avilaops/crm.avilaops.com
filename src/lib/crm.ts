@@ -201,3 +201,97 @@ export function listLeads(filters?: { search?: string; page?: number; pageSize?:
 export function getPipeline() {
   return api<{ stages: PipelineStage[]; leads: CrmLead[] }>('/api/pipeline')
 }
+
+export type CrmTask = {
+  id: string
+  contact_id: string | null
+  lead_id: string | null
+  assigned_user_id: string | null
+  assigned_user_name?: string | null
+  contact_name?: string | null
+  lead_title?: string | null
+  title: string
+  description: string | null
+  priority: 'low' | 'medium' | 'high' | string
+  due_at: string | null
+  status: 'open' | 'completed' | 'canceled' | string
+  created_at: string
+  updated_at: string
+}
+
+export type CrmCompany = {
+  id: string
+  name: string
+  cnpj: string | null
+  domain: string | null
+  phone: string | null
+  email: string | null
+  address: string | null
+  contacts_count?: number
+  created_at: string
+  updated_at: string
+}
+
+export function listTasks(filters?: { status?: string; contactId?: string; leadId?: string; assignedUserId?: string; search?: string }) {
+  return api<{ tasks: CrmTask[]; pagination: { page: number; pageSize: number; total: number } }>(`/api/tasks${toQuery(filters)}`)
+}
+
+export function createTask(input: { title: string; description?: string; contactId?: string; leadId?: string; assignedUserId?: string; dueAt?: string; priority?: 'low' | 'medium' | 'high' }) {
+  return api<{ task: CrmTask }>('/api/tasks', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  })
+}
+
+export function updateTask(taskId: string, input: { title?: string; description?: string | null; status?: 'open' | 'completed' | 'canceled'; assignedUserId?: string | null; dueAt?: string | null; priority?: 'low' | 'medium' | 'high' }) {
+  return api<{ task: CrmTask }>(`/api/tasks/${taskId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  })
+}
+
+export function deleteTask(taskId: string) {
+  return api<{ ok: boolean }>(`/api/tasks/${taskId}`, { method: 'DELETE' })
+}
+
+export function listCompanies(filters?: { search?: string; page?: number; pageSize?: number }) {
+  return api<{ companies: CrmCompany[]; pagination: { page: number; pageSize: number; total: number } }>(`/api/companies${toQuery(filters)}`)
+}
+
+export function createCompany(input: { name: string; cnpj?: string; domain?: string; phone?: string; email?: string; address?: string }) {
+  return api<{ company: CrmCompany }>('/api/companies', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  })
+}
+
+export function updateCompany(companyId: string, input: Partial<{ name: string; cnpj: string; domain: string; phone: string; email: string; address: string }>) {
+  return api<{ company: CrmCompany }>(`/api/companies/${companyId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  })
+}
+
+export function deleteCompany(companyId: string) {
+  return api<{ ok: boolean }>(`/api/companies/${companyId}`, { method: 'DELETE' })
+}
+
+export function updateLeadStage(leadId: string, stageId: string) {
+  return api<{ lead: CrmLead }>(`/api/leads/${leadId}/stage`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ stageId }),
+  })
+}
+
+export function getQrCodeInstance() {
+  return api<{ instanceName: string; qrcode: string | null; status: string; channelId?: string }>('/api/channels/qrcode/instance', { method: 'POST' })
+}
+
+export function getQrCodeStatus(instanceName: string) {
+  return api<{ status: string; display_name?: string; phone_number?: string }>(`/api/channels/qrcode/status/${instanceName}`)
+}

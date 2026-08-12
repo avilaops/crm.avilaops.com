@@ -9,8 +9,21 @@ services:
         condition: service_healthy
     env_file:
       - .env.production.local
+    environment:
+      EVOLUTION_API_URL: "http://evolution-api:8080"
     ports:
       - "127.0.0.1:3020:3000"
+    networks:
+      - agenda-crm
+
+  evolution-api:
+    image: atendai/evolution-api:v2.1.2
+    container_name: agenda-crm-evolution
+    restart: unless-stopped
+    environment:
+      SERVER_URL: "http://evolution-api:8080"
+      AUTHENTICATION_API_KEY: "global-apikey"
+      DATABASE_ENABLED: "false"
     networks:
       - agenda-crm
 

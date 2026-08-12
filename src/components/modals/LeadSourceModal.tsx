@@ -1,6 +1,7 @@
-import { CheckCircle2, ChevronLeft, MessageCircle, QrCode, X } from 'lucide-react'
-import { useState, type ComponentType } from 'react'
+import { CheckCircle2, ChevronLeft, MessageCircle, X, Loader2 } from 'lucide-react'
+import { useEffect, useState, type ComponentType } from 'react'
 import { connectMeta, type MetaStatus } from '../../lib/meta'
+import { getQrCodeInstance, getQrCodeStatus } from '../../lib/crm'
 
 export type LeadSource = 'whatsapp' | 'instagram'
 type Step = 'benefits' | 'install' | 'connect'
@@ -33,10 +34,10 @@ const sourceConfig = {
       'Transforme o número em nome comercial',
     ],
     installTitle: 'Teste o WhatsApp Business em apenas dois passos',
-    installSubtitle: 'Escaneie o QR code e explore os recursos sem riscos.',
+    installSubtitle: 'Escaneie o QR code abaixo pelo aplicativo do WhatsApp do seu celular.',
     connectTitle: 'Conecte o WhatsApp à sua conta Agenda',
     connectBody: 'Vincule sua conta WhatsApp existente ou crie uma nova com um número de telefone. Para vários números, repita o processo por canal.',
-    connectActions: ['Conectar meu WhatsApp', 'Conectar número novo'],
+    connectActions: ['Conectar via Meta API', 'Conectar via QR Code'],
   },
   instagram: {
     label: 'Instagram Direct',
@@ -85,8 +86,31 @@ function LeadSourceModal({
   const [step, setStep] = useState<Step>('benefits')
   const [connecting, setConnecting] = useState(false)
   const [error, setError] = useState('')
+  const [qrcode, setQrcode] = useState<string | null>(null)
+  const [qrStatus, setQrStatus] = useState<string>('connecting')
+  const [instanceName, setInstanceName] = useState<string | null>(null)
   const config = sourceConfig[source]
   const Icon = config.icon
+
+  useEffect(() => {
+    if (step === 'install' && source === 'whatsapp') {
+      getQrCodeInstance().then((data) => {
+        setQrcode(data.qrcode)
+        setQrStatus(data.status)
+        setInstanceName(data.instanceName)
+      }).catch(() => {})
+    }
+  }, [step, source])
+
+  useEffect(() => {
+    if (!instanceName || qrStatus === 'open') return
+    const interval = setInterval(() => {
+      getQrCodeStatus(instanceName).then((data) => {
+        if (data.status) setQrStatus(data.status)
+      }).catch(() => {})
+    }, 3000)
+    return () => clearInterval(interval)
+  }, [instanceName, qrStatus])
 
   async function handleConnect() {
     setConnecting(true)
@@ -144,14 +168,29 @@ function LeadSourceModal({
             <button className="absolute right-4 top-4 text-white" onClick={onClose}><X size={18} /></button>
             <h2 className="max-w-sm text-2xl font-bold">{config.installTitle}</h2>
             <p className="mt-3 max-w-sm text-white/80">{config.installSubtitle}</p>
-            <div className="mt-8 grid h-32 w-32 place-items-center rounded bg-white text-slate-900">
-              <QrCode size={72} />
+            
+            <div className="mt-6 flex flex-col items-start gap-3">
+              <div className="overflow-hidden rounded bg-white p-3 shadow-lg">
+                {qrcode ? (
+                  <img src={qrcode} alt="QR Code WhatsApp" className="h-44 w-44 object-contain" />
+                ) : (
+                  <div className="grid h-44 w-44 place-items-center text-slate-900">
+                    <Loader2 className="animate-spin text-emerald-600" size={36} />
+                  </div>
+                )}
+              </div>
+              {source === 'whatsapp' && (
+                <span className="rounded bg-emerald-500/20 px-3 py-1 text-xs font-semibold text-emerald-300">
+                  {qrStatus === 'open' ? '✓ Dispositivo conectado!' : 'Aguardando leitura do QR Code...'}
+                </span>
+              )}
             </div>
+
             <button
-              className="mt-8 rounded bg-white px-5 py-2 text-sm font-semibold text-slate-900"
+              className="mt-6 rounded bg-white px-5 py-2 text-sm font-semibold text-slate-900 hover:bg-slate-100 transition"
               onClick={() => setStep('connect')}
             >
-              Continuar
+              Opções Avançadas / Meta Cloud API
             </button>
           </section>
         </div>

@@ -136,6 +136,22 @@ alter table messages add column if not exists request_id text;
 
 create unique index if not exists messages_tenant_id_idempotency_key_idx on messages(tenant_id, idempotency_key) where idempotency_key is not null;
 
+create table if not exists companies (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null references tenants(id) on delete cascade,
+  name text not null,
+  cnpj text,
+  domain text,
+  phone text,
+  email text,
+  address text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+alter table contacts add column if not exists company_id uuid references companies(id) on delete set null;
+alter table leads add column if not exists company_id uuid references companies(id) on delete set null;
+
 create table if not exists tasks (
   id uuid primary key default gen_random_uuid(),
   tenant_id uuid not null references tenants(id) on delete cascade,
@@ -143,11 +159,16 @@ create table if not exists tasks (
   lead_id uuid references leads(id) on delete set null,
   assigned_user_id uuid references users(id) on delete set null,
   title text not null,
+  description text,
+  priority text not null default 'medium',
   due_at timestamptz,
   status text not null default 'open',
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+alter table tasks add column if not exists description text;
+alter table tasks add column if not exists priority text not null default 'medium';
 
 create table if not exists integrations (
   id uuid primary key default gen_random_uuid(),

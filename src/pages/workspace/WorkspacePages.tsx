@@ -1,7 +1,37 @@
 import { useEffect, useState } from 'react'
-import { Archive, MessageCircle, MoreHorizontal, Plus, Search, X } from 'lucide-react'
+import { Archive, CheckCircle2, Clock, MessageCircle, MoreHorizontal, Plus, Search, Trash2, X } from 'lucide-react'
 import type { LeadSource } from '../../components/modals/LeadSourceModal'
-import { archiveConversation, assignConversation, bootstrap, createLeadFromConversation, getPipeline, listChannels, listContacts, listConversationMessages, listConversations, listLeads, sendConversationMessage, type ConversationFilters, type CrmChannel, type CrmContact, type CrmConversation, type CrmLead, type CrmMessage, type CrmUser, type PipelineStage } from '../../lib/crm'
+import {
+  archiveConversation,
+  assignConversation,
+  bootstrap,
+  createCompany,
+  createLeadFromConversation,
+  createTask,
+  deleteCompany,
+  deleteTask,
+  getPipeline,
+  listChannels,
+  listCompanies,
+  listContacts,
+  listConversationMessages,
+  listConversations,
+  listLeads,
+  listTasks,
+  sendConversationMessage,
+  updateLeadStage,
+  updateTask,
+  type ConversationFilters,
+  type CrmChannel,
+  type CrmCompany,
+  type CrmContact,
+  type CrmConversation,
+  type CrmLead,
+  type CrmMessage,
+  type CrmTask,
+  type CrmUser,
+  type PipelineStage,
+} from '../../lib/crm'
 import type { Page } from '../../types'
 
 function Workspace({ page, setPage, openLeadSource }: { page: Page; setPage: (page: Page) => void; openLeadSource: (source: LeadSource) => void }) {
@@ -11,9 +41,9 @@ function Workspace({ page, setPage, openLeadSource }: { page: Page; setPage: (pa
   if (page === 'team-chat') return <TeamChat />
   if (page === 'pipeline') return <Pipeline />
   if (page === 'leads') return <LeadsList />
-  if (page === 'calendar') return <CalendarPage />
+  if (page === 'calendar') return <TasksPage />
   if (page === 'contacts') return <ContactsList />
-  if (page === 'companies') return <SimpleTable title="Empresas" tab="Lista completa" columns={['Empresa', 'Telefone', 'Responsável', 'Status']} empty="Nenhuma empresa encontrada." action="+ Adicionar empresa" />
+  if (page === 'companies') return <CompaniesList />
   if (page === 'all-contacts') return <SimpleTable title="Todos os contatos e empresas" tab="Lista completa" columns={['Nome', 'Tipo', 'Telefone', 'E-mail']} empty="Nenhum registro encontrado." action="+ Adicionar" />
   if (page === 'media') return <EmptyFeature title="Mídia" body="Arquivos, imagens e documentos usados nas conversas ficarão aqui." />
   if (page === 'products') return <EmptyFeature title="Produtos" body="Cadastre produtos e use catálogos em mensagens e automações." />
@@ -23,7 +53,7 @@ function Workspace({ page, setPage, openLeadSource }: { page: Page; setPage: (pa
   return <HomePage setPage={setPage} openLeadSource={openLeadSource} />
 }
 
-export function Topbar({ title, tab, action }: { title: string; tab?: string; action?: string }) {
+export function Topbar({ title, tab, action, onAction }: { title: string; tab?: string; action?: string; onAction?: () => void }) {
   return (
     <header className="flex h-16 items-center gap-4 border-b border-slate-200 bg-white px-5">
       <h2 className="min-w-32 text-base font-bold uppercase tracking-wide">{title}</h2>
@@ -35,7 +65,11 @@ export function Topbar({ title, tab, action }: { title: string; tab?: string; ac
       <button className="rounded border border-slate-200 px-3 py-2 text-sm font-semibold">
         <MoreHorizontal size={16} />
       </button>
-      {action && <button className="rounded bg-blue-600 px-4 py-2 text-sm font-semibold text-white">{action}</button>}
+      {action && (
+        <button className="rounded bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 transition" onClick={onAction}>
+          {action}
+        </button>
+      )}
     </header>
   )
 }
@@ -359,6 +393,14 @@ function formatWait(seconds: number) {
   return `${Math.floor(minutes / 60)}h`
 }
 
+function TableMessage({ colSpan, text }: { colSpan: number; text: string }) {
+  return <tr><td className="px-4 py-6 text-slate-400" colSpan={colSpan}>{text}</td></tr>
+}
+
+function formatCurrency(valueCents: number) {
+  return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(valueCents / 100)
+}
+
 function TeamChat() {
   return (
     <div>
@@ -394,32 +436,51 @@ function Pipeline() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
-  useEffect(() => {
+  const loadPipeline = () => {
+    setLoading(true)
     getPipeline()
       .then((data) => {
         setStages(data.stages)
         setLeads(data.leads)
+        setError('')
       })
       .catch((err: Error) => setError(err.message))
       .finally(() => setLoading(false))
+  }
+
+  useEffect(() => {
+    loadPipeline()
   }, [])
+
+  const handleStageChange = async (leadId: string, newStageId: string) => {
+    try {
+      await updateLeadStage(leadId, newStageId)
+      setLeads((prev) => prev.map((l) => (l.id === leadId ? { ...l, stage_id: newStageId } : l)))
+    } catch (err: any) {
+      alert(err.message || 'Falha ao mover lead.')
+    }
+  }
 
   return (
     <div>
-      <Topbar title="Leads" tab="Leads ativos" action="+ Novo lead" />
+      <Topbar title="Leads" tab="Funil de Vendas" />
       <div className="overflow-auto p-5">
         {error && <p className="mb-4 rounded border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>}
         <div className="grid min-w-[980px] gap-4 rounded bg-white p-4" style={{ gridTemplateColumns: `repeat(${Math.max(stages.length, 1)}, minmax(220px, 1fr))` }}>
           {loading && <p className="p-4 text-sm text-slate-400">Carregando funil...</p>}
           {!loading && stages.map((stage) => (
-            <div key={stage.id} className="min-h-[520px]">
-              <div className="border-b-4 pb-2 text-center text-sm font-bold uppercase tracking-[0.14em]" style={{ borderColor: stage.color }}>
-                {stage.name}
+            <div key={stage.id} className="min-h-[520px] rounded border border-slate-100 bg-slate-50/50 p-2">
+              <div className="border-b-4 pb-2 text-center text-xs font-bold uppercase tracking-[0.14em]" style={{ borderColor: stage.color }}>
+                {stage.name} ({leads.filter((l) => l.stage_id === stage.id).length})
               </div>
-              {leads.filter((lead) => lead.stage_id === stage.id).map((lead) => (
-                <LeadCard key={lead.id} name={lead.contact_name ?? lead.title} company={lead.title} value={formatCurrency(lead.value_cents)} />
-              ))}
-              {leads.filter((lead) => lead.stage_id === stage.id).length === 0 && <p className="p-4 text-center text-sm text-slate-400">Sem leads nesta etapa.</p>}
+              <div className="mt-3 space-y-3">
+                {leads.filter((lead) => lead.stage_id === stage.id).map((lead) => (
+                  <LeadCard key={lead.id} lead={lead} stages={stages} onStageChange={handleStageChange} />
+                ))}
+              </div>
+              {leads.filter((lead) => lead.stage_id === stage.id).length === 0 && (
+                <p className="p-4 text-center text-xs text-slate-400">Sem leads nesta etapa.</p>
+              )}
             </div>
           ))}
         </div>
@@ -428,17 +489,355 @@ function Pipeline() {
   )
 }
 
-function LeadCard({ name, company, value }: { name: string; company: string; value: string }) {
+function LeadCard({ lead, stages, onStageChange }: { lead: CrmLead; stages: PipelineStage[]; onStageChange: (leadId: string, stageId: string) => void }) {
+  const name = lead.contact_name ?? lead.title
   return (
-    <div className="mt-4 rounded border border-slate-200 bg-white p-3 shadow-sm">
-      <div className="flex gap-3">
-        <div className="grid h-10 w-10 place-items-center rounded-full bg-slate-200 text-xs font-bold">{name[0]}</div>
-        <div className="min-w-0">
-          <p className="truncate text-sm font-semibold">{name}</p>
-          <p className="truncate text-sm font-semibold text-blue-700">{company}</p>
-          <p className="mt-1 text-xs text-slate-500">{value} <span className="rounded border px-1">Urgente</span></p>
+    <div className="rounded border border-slate-200 bg-white p-3 shadow-sm hover:shadow-md transition">
+      <div className="flex gap-3 items-start">
+        <div className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-blue-100 text-blue-700 text-xs font-bold">{name[0]?.toUpperCase() ?? 'L'}</div>
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-xs font-semibold text-slate-900">{name}</p>
+          <p className="truncate text-xs font-medium text-blue-600">{lead.title}</p>
+          <p className="mt-1 text-xs font-semibold text-slate-700">{formatCurrency(lead.value_cents)}</p>
+          <div className="mt-2 flex items-center justify-between gap-1">
+            <select
+              className="w-full rounded border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] text-slate-700 outline-none"
+              value={lead.stage_id ?? ''}
+              onChange={(e) => onStageChange(lead.id, e.target.value)}
+            >
+              {stages.map((s) => (
+                <option key={s.id} value={s.id}>
+                  Mover para: {s.name}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
       </div>
+    </div>
+  )
+}
+
+function CompaniesList() {
+  const [companies, setCompanies] = useState<CrmCompany[]>([])
+  const [search, setSearch] = useState('')
+  const [total, setTotal] = useState(0)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [showModal, setShowModal] = useState(false)
+  const [form, setForm] = useState({ name: '', cnpj: '', domain: '', phone: '', email: '', address: '' })
+  const [saving, setSaving] = useState(false)
+
+  const loadCompanies = () => {
+    setLoading(true)
+    listCompanies({ search, page: 1, pageSize: 50 })
+      .then((data) => {
+        setCompanies(data.companies)
+        setTotal(data.pagination.total)
+        setError('')
+      })
+      .catch((err: Error) => setError(err.message))
+      .finally(() => setLoading(false))
+  }
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => {
+      setLoading(true)
+      listCompanies({ search, page: 1, pageSize: 50 })
+        .then((data) => {
+          setCompanies(data.companies)
+          setTotal(data.pagination.total)
+          setError('')
+        })
+        .catch((err: Error) => setError(err.message))
+        .finally(() => setLoading(false))
+    }, 250)
+    return () => window.clearTimeout(timeout)
+  }, [search])
+
+  const handleCreateCompany = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!form.name.trim()) return
+    setSaving(true)
+    try {
+      await createCompany(form)
+      setShowModal(false)
+      setForm({ name: '', cnpj: '', domain: '', phone: '', email: '', address: '' })
+      loadCompanies()
+    } catch (err: any) {
+      alert(err.message || 'Falha ao cadastrar empresa.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleDeleteCompany = async (id: string) => {
+    if (!confirm('Deseja realmente remover esta empresa?')) return
+    try {
+      await deleteCompany(id)
+      loadCompanies()
+    } catch (err: any) {
+      alert(err.message || 'Falha ao deletar empresa.')
+    }
+  }
+
+  return (
+    <div>
+      <Topbar title="Empresas" tab={`${total} empresa(s)`} action="+ Nova Empresa" onAction={() => setShowModal(true)} />
+      <div className="space-y-4 p-5">
+        <input className="w-full max-w-md rounded border border-slate-200 bg-white px-3 py-2 text-sm outline-none" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar empresas por nome, CNPJ, site ou email..." />
+        {error && <p className="rounded border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>}
+        <DataTable columns={['Empresa', 'CNPJ', 'Domínio / Site', 'Telefone', 'E-mail', 'Contatos Vinculados', 'Ações']}>
+          {loading && <TableMessage colSpan={7} text="Carregando empresas..." />}
+          {!loading && companies.length === 0 && <TableMessage colSpan={7} text="Nenhuma empresa cadastrada." />}
+          {companies.map((company) => (
+            <tr key={company.id} className="border-b border-slate-100 hover:bg-slate-50/50">
+              <td className="px-4 py-3 font-semibold text-slate-900">{company.name}</td>
+              <td className="px-4 py-3 text-slate-600">{company.cnpj || '-'}</td>
+              <td className="px-4 py-3 text-blue-600 font-medium">{company.domain ? <a href={company.domain.startsWith('http') ? company.domain : `https://${company.domain}`} target="_blank" rel="noreferrer" className="underline">{company.domain}</a> : '-'}</td>
+              <td className="px-4 py-3 text-slate-600">{company.phone || '-'}</td>
+              <td className="px-4 py-3 text-slate-600">{company.email || '-'}</td>
+              <td className="px-4 py-3 text-slate-600"><span className="rounded bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-700">{company.contacts_count ?? 0} contato(s)</span></td>
+              <td className="px-4 py-3">
+                <button className="text-red-500 hover:text-red-700 p-1" onClick={() => handleDeleteCompany(company.id)} title="Excluir">
+                  <Trash2 size={16} />
+                </button>
+              </td>
+            </tr>
+          ))}
+        </DataTable>
+      </div>
+
+      {showModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-md rounded-lg bg-white p-6 shadow-xl">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <h3 className="text-base font-bold text-slate-900">Cadastrar Nova Empresa</h3>
+              <button className="text-slate-400 hover:text-slate-600" onClick={() => setShowModal(false)}><X size={18} /></button>
+            </div>
+            <form onSubmit={handleCreateCompany} className="mt-4 space-y-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700">Nome da Empresa *</label>
+                <input required className="mt-1 w-full rounded border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-500" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Ex: Ávila Ops Tecnologia" />
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700">CNPJ</label>
+                  <input className="mt-1 w-full rounded border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-500" value={form.cnpj} onChange={(e) => setForm({ ...form, cnpj: e.target.value })} placeholder="00.000.000/0001-00" />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700">Domínio / Website</label>
+                  <input className="mt-1 w-full rounded border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-500" value={form.domain} onChange={(e) => setForm({ ...form, domain: e.target.value })} placeholder="avila.inc" />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700">Telefone</label>
+                  <input className="mt-1 w-full rounded border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-500" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} placeholder="+55 11 99999-9999" />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700">E-mail</label>
+                  <input type="email" className="mt-1 w-full rounded border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-500" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="contato@empresa.com" />
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700">Endereço / Cidade</label>
+                <input className="mt-1 w-full rounded border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-500" value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} placeholder="São Paulo, SP" />
+              </div>
+              <div className="mt-5 flex justify-end gap-2 pt-2">
+                <button type="button" className="rounded border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50" onClick={() => setShowModal(false)}>Cancelar</button>
+                <button type="submit" disabled={saving} className="rounded bg-blue-600 px-4 py-2 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-50">
+                  {saving ? 'Salvando...' : 'Cadastrar Empresa'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function TasksPage() {
+  const [tasks, setTasks] = useState<CrmTask[]>([])
+  const [tabFilter, setTabFilter] = useState<'open' | 'completed' | 'all'>('open')
+  const [search, setSearch] = useState('')
+  const [total, setTotal] = useState(0)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [showModal, setShowModal] = useState(false)
+  const [form, setForm] = useState({ title: '', description: '', dueAt: '', priority: 'medium' as 'low' | 'medium' | 'high' })
+  const [saving, setSaving] = useState(false)
+
+  const loadTasks = () => {
+    setLoading(true)
+    listTasks({ status: tabFilter, search })
+      .then((data) => {
+        setTasks(data.tasks)
+        setTotal(data.pagination.total)
+        setError('')
+      })
+      .catch((err: Error) => setError(err.message))
+      .finally(() => setLoading(false))
+  }
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => {
+      setLoading(true)
+      listTasks({ status: tabFilter, search })
+        .then((data) => {
+          setTasks(data.tasks)
+          setTotal(data.pagination.total)
+          setError('')
+        })
+        .catch((err: Error) => setError(err.message))
+        .finally(() => setLoading(false))
+    }, 250)
+    return () => window.clearTimeout(timeout)
+  }, [tabFilter, search])
+
+  const handleToggleTask = async (task: CrmTask) => {
+    const newStatus = task.status === 'open' ? 'completed' : 'open'
+    try {
+      await updateTask(task.id, { status: newStatus })
+      setTasks((prev) => prev.map((t) => (t.id === task.id ? { ...t, status: newStatus } : t)))
+    } catch (err: any) {
+      alert(err.message || 'Falha ao atualizar tarefa.')
+    }
+  }
+
+  const handleDeleteTask = async (id: string) => {
+    if (!confirm('Excluir esta tarefa?')) return
+    try {
+      await deleteTask(id)
+      loadTasks()
+    } catch (err: any) {
+      alert(err.message || 'Falha ao deletar tarefa.')
+    }
+  }
+
+  const handleCreateTask = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!form.title.trim()) return
+    setSaving(true)
+    try {
+      await createTask({
+        title: form.title,
+        description: form.description || undefined,
+        dueAt: form.dueAt ? new Date(form.dueAt).toISOString() : undefined,
+        priority: form.priority,
+      })
+      setShowModal(false)
+      setForm({ title: '', description: '', dueAt: '', priority: 'medium' })
+      loadTasks()
+    } catch (err: any) {
+      alert(err.message || 'Falha ao criar tarefa.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div>
+      <Topbar title="Tarefas & Lembretes" tab={`${total} tarefa(s)`} action="+ Nova Tarefa" onAction={() => setShowModal(true)} />
+      <div className="space-y-4 p-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex gap-1 rounded bg-slate-100 p-1">
+            <button className={`rounded px-3 py-1.5 text-xs font-semibold ${tabFilter === 'open' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600'}`} onClick={() => setTabFilter('open')}>
+              Pendentes
+            </button>
+            <button className={`rounded px-3 py-1.5 text-xs font-semibold ${tabFilter === 'completed' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600'}`} onClick={() => setTabFilter('completed')}>
+              Concluídas
+            </button>
+            <button className={`rounded px-3 py-1.5 text-xs font-semibold ${tabFilter === 'all' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600'}`} onClick={() => setTabFilter('all')}>
+              Todas
+            </button>
+          </div>
+          <input className="w-full max-w-xs rounded border border-slate-200 bg-white px-3 py-1.5 text-sm outline-none" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Filtrar tarefas..." />
+        </div>
+
+        {error && <p className="rounded border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>}
+
+        <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
+          {loading && <div className="p-6 text-center text-sm text-slate-400">Carregando tarefas...</div>}
+          {!loading && tasks.length === 0 && <div className="p-6 text-center text-sm text-slate-400">Nenhuma tarefa encontrada.</div>}
+          {!loading &&
+            tasks.map((task) => {
+              const isCompleted = task.status === 'completed'
+              const priorityColor = task.priority === 'high' ? 'bg-red-100 text-red-700' : task.priority === 'low' ? 'bg-blue-100 text-blue-700' : 'bg-amber-100 text-amber-700'
+              const priorityLabel = task.priority === 'high' ? 'Alta' : task.priority === 'low' ? 'Baixa' : 'Média'
+              return (
+                <div key={task.id} className={`flex items-center justify-between border-b border-slate-100 p-4 transition ${isCompleted ? 'bg-slate-50/70' : 'hover:bg-slate-50'}`}>
+                  <div className="flex items-center gap-3 min-w-0">
+                    <button className="text-slate-400 hover:text-blue-600 shrink-0" onClick={() => handleToggleTask(task)}>
+                      {isCompleted ? <CheckCircle2 className="text-emerald-600" size={20} /> : <div className="h-5 w-5 rounded-full border-2 border-slate-300" />}
+                    </button>
+                    <div className="min-w-0">
+                      <p className={`text-sm font-semibold ${isCompleted ? 'text-slate-400 line-through' : 'text-slate-900'}`}>{task.title}</p>
+                      {task.description && <p className="text-xs text-slate-500 truncate mt-0.5">{task.description}</p>}
+                      <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-400">
+                        {task.due_at && (
+                          <span className="flex items-center gap-1 text-slate-600 font-medium">
+                            <Clock size={12} /> {new Date(task.due_at).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                          </span>
+                        )}
+                        {task.contact_name && <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-600">Contato: {task.contact_name}</span>}
+                        {task.lead_title && <span className="rounded bg-blue-50 px-1.5 py-0.5 text-[11px] text-blue-700">Lead: {task.lead_title}</span>}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3 shrink-0">
+                    <span className={`rounded px-2 py-0.5 text-xs font-semibold ${priorityColor}`}>{priorityLabel}</span>
+                    <button className="text-slate-400 hover:text-red-600 p-1" onClick={() => handleDeleteTask(task.id)}>
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
+                </div>
+              )
+            })}
+        </div>
+      </div>
+
+      {showModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-md rounded-lg bg-white p-6 shadow-xl">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <h3 className="text-base font-bold text-slate-900">Nova Tarefa / Lembrete</h3>
+              <button className="text-slate-400 hover:text-slate-600" onClick={() => setShowModal(false)}><X size={18} /></button>
+            </div>
+            <form onSubmit={handleCreateTask} className="mt-4 space-y-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700">Título da Tarefa *</label>
+                <input required className="mt-1 w-full rounded border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-500" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="Ex: Enviar proposta de contrato" />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700">Descrição / Notas</label>
+                <textarea rows={3} className="mt-1 w-full rounded border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-500" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="Detalhes adicionais sobre esta tarefa..." />
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700">Data de Vencimento</label>
+                  <input type="datetime-local" className="mt-1 w-full rounded border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-500" value={form.dueAt} onChange={(e) => setForm({ ...form, dueAt: e.target.value })} />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700">Prioridade</label>
+                  <select className="mt-1 w-full rounded border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-500" value={form.priority} onChange={(e) => setForm({ ...form, priority: e.target.value as any })}>
+                    <option value="low">Baixa</option>
+                    <option value="medium">Média</option>
+                    <option value="high">Alta</option>
+                  </select>
+                </div>
+              </div>
+              <div className="mt-5 flex justify-end gap-2 pt-2">
+                <button type="button" className="rounded border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50" onClick={() => setShowModal(false)}>Cancelar</button>
+                <button type="submit" disabled={saving} className="rounded bg-blue-600 px-4 py-2 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-50">
+                  {saving ? 'Salvando...' : 'Criar Tarefa'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -553,44 +952,17 @@ function DataTable({ columns, children }: { columns: string[]; children: React.R
   )
 }
 
-function TableMessage({ colSpan, text }: { colSpan: number; text: string }) {
-  return <tr><td className="px-4 py-6 text-slate-400" colSpan={colSpan}>{text}</td></tr>
-}
-
-function formatCurrency(valueCents: number) {
-  return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(valueCents / 100)
-}
-
-function SimpleTable({ title, tab, columns, empty, action }: { title: string; tab: string; columns: string[]; empty: string; action: string }) {
+function SimpleTable({ title, tab, columns, empty, action }: { title: string; tab?: string; columns: string[]; empty: string; action?: string }) {
   return (
     <div>
       <Topbar title={title} tab={tab} action={action} />
       <div className="p-5">
-        <div className="overflow-hidden bg-white">
+        <div className="overflow-hidden bg-white rounded border border-slate-200">
           <div className="grid border-b border-slate-200 text-xs font-bold uppercase text-slate-400" style={{ gridTemplateColumns: `repeat(${columns.length}, minmax(160px, 1fr))` }}>
             {columns.map((column) => <div key={column} className="border-r border-slate-100 p-4">{column}</div>)}
           </div>
-          <p className="p-4 text-sm text-red-400">{empty}</p>
+          <p className="p-4 text-sm text-slate-500">{empty}</p>
         </div>
-      </div>
-    </div>
-  )
-}
-
-function CalendarPage() {
-  const days = ['Seg. 20 Jul. 2026', 'Ter 21', 'Qua 22', 'Qui 23', 'Sex 24', 'Sáb 25', 'Dom 26']
-  return (
-    <div>
-      <Topbar title="Calendário" tab="Meus eventos" action="+ Novo evento" />
-      <div className="grid min-h-[calc(100vh-4rem)] grid-cols-[80px_repeat(7,minmax(120px,1fr))] overflow-auto bg-white text-sm text-slate-400">
-        <div className="border-b border-r border-slate-200 p-3">Dia todo</div>
-        {days.map((day) => <div key={day} className="border-b border-r border-slate-200 p-3 text-center">{day}</div>)}
-        {Array.from({ length: 14 }).map((_, row) => (
-          <>
-            <div key={`time-${row}`} className="border-r border-slate-200 p-3 text-right">{String(row + 8).padStart(2, '0')}:00</div>
-            {days.map((day, col) => <div key={`${day}-${row}`} className={`h-14 border-r border-t border-slate-100 ${col === 3 ? 'bg-blue-50/40' : ''}`} />)}
-          </>
-        ))}
       </div>
     </div>
   )
@@ -600,10 +972,10 @@ function EmptyFeature({ title, body }: { title: string; body: string }) {
   return (
     <div>
       <Topbar title={title} />
-      <div className="grid min-h-[calc(100vh-4rem)] place-items-center p-8 text-center">
+      <div className="grid min-h-[calc(100vh-4rem)] place-items-center p-8 text-center bg-slate-50/50">
         <div>
-          <h3 className="text-xl font-semibold">{title}</h3>
-          <p className="mt-2 max-w-md text-slate-500">{body}</p>
+          <h3 className="text-xl font-semibold text-slate-900">{title}</h3>
+          <p className="mt-2 max-w-md text-sm text-slate-500">{body}</p>
         </div>
       </div>
     </div>
@@ -612,4 +984,3 @@ function EmptyFeature({ title, body }: { title: string; body: string }) {
 
 
 export default Workspace
-
