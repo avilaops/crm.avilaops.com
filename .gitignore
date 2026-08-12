@@ -11,7 +11,14 @@ node_modules
 dist
 dist-server
 dist-ssr
+.env
+.env.*
+!.env.example
+!.env.production.example
+!.env.publish.example
 *.local
+*.tgz
+coverage
 .server.pid
 .wrangler
 

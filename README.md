@@ -1,6 +1,6 @@
-# Agenda Contatos Web
+# Agenda CRM
 
-Frontend web privado para um CRM multi-tenant com WhatsApp, funil de vendas, inbox, automações e agenda como módulo auxiliar.
+Aplicacao web privada para um CRM multi-tenant com WhatsApp, funil de vendas, inbox, automacoes e agenda como modulo auxiliar.
 
 Responsável técnico: Nícolas Ávila  
 Empresa: Ávila Ops Tecnologia  
@@ -20,8 +20,7 @@ Software privado.
 ```powershell
 npm install
 npm run db:migrate
-npm run dev:api
-npm run dev
+npm run dev:full
 ```
 
 O Vite abrirá a aplicação em `http://localhost:5173` e redirecionará `/api` para o backend em `http://localhost:3000`.
@@ -30,8 +29,7 @@ O Vite abrirá a aplicação em `http://localhost:5173` e redirecionará `/api` 
 
 ```powershell
 npm run db:migrate
-npm run build
-npm run lint
+npm run validate
 ```
 
 ## Execução com backend
@@ -47,6 +45,28 @@ O backend serve a API e o frontend compilado no mesmo processo.
 - Frontend: `http://localhost:3000/`
 - API: `http://localhost:3000/api`
 - Healthcheck: `http://localhost:3000/api/health`
+
+## CLI
+
+Os comandos operacionais tambem estao disponiveis pelo CLI oficial:
+
+```powershell
+npm run cli -- help
+npm run doctor
+npx @avilaops/agenda-cli doctor
+```
+
+Exemplos:
+
+```powershell
+npm run cli -- dev
+npm run cli -- db migrate
+npm run cli -- docker status
+npm run cli -- worker typecheck
+npm run cli -- env check --mode local
+```
+
+A referencia completa esta em [`docs/CLI-E-NPM.md`](docs/CLI-E-NPM.md).
 
 ## Deploy com Docker
 
@@ -99,6 +119,6 @@ No app Meta, cadastre o callback conforme o domínio final do servidor:
 https://SEU-DOMINIO/oauth-callback.html
 ```
 
-## Próximo passo para multi-tenant
+## Backlog de produto
 
-A base multi-tenant já existe no Postgres. O próximo passo é processar o payload real dos webhooks WhatsApp/Instagram para popular `channels`, `contacts`, `conversations`, `messages` e `events`.
+O levantamento de paridade funcional esta em [`docs/FUNCIONALIDADES-PENDENTES-KOMMO.md`](docs/FUNCIONALIDADES-PENDENTES-KOMMO.md).

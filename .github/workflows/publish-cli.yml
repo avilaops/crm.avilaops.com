@@ -1,0 +1,48 @@
+name: Publish Agenda CLI
+
+on:
+  push:
+    tags:
+      - agenda-cli-v*
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: npm-production
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate tag and package version
+        shell: bash
+        run: |
+          tag_version="${GITHUB_REF_NAME#agenda-cli-v}"
+          package_version="$(node -p "require('./packages/cli/package.json').version")"
+          test "$tag_version" = "$package_version" || {
+            echo "Tag $tag_version differs from package $package_version"
+            exit 1
+          }
+
+      - name: Test and inspect package
+        run: |
+          npm run cli:test
+          npm run cli:pack
+
+      - name: Publish package
+        run: npm publish --workspace @avilaops/agenda-cli --access public

@@ -1,0 +1,49 @@
+{
+  "name": "@avilaops/agenda-cli",
+  "version": "0.1.0",
+  "description": "CLI operacional do Agenda CRM.",
+  "type": "module",
+  "bin": {
+    "agenda": "bin/agenda.js",
+    "agenda-crm": "bin/agenda.js"
+  },
+  "exports": {
+    ".": "./src/cli.mjs"
+  },
+  "files": [
+    "bin",
+    "src",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --test",
+    "prepack": "npm test"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/avilaops/agenda.git",
+    "directory": "packages/cli"
+  },
+  "homepage": "https://github.com/avilaops/agenda#readme",
+  "bugs": {
+    "url": "https://github.com/avilaops/agenda/issues"
+  },
+  "keywords": [
+    "agenda",
+    "crm",
+    "whatsapp",
+    "cli",
+    "avilaops"
+  ],
+  "author": "Avila Ops Tecnologia",
+  "license": "UNLICENSED",
+  "dependencies": {
+    "dotenv": "^17.4.2"
+  }
+}

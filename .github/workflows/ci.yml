@@ -1,0 +1,39 @@
+name: Agenda CRM CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install application dependencies
+        run: npm ci
+
+      - name: Validate application and CLI
+        run: npm run validate
+
+      - name: Validate npm package contents
+        run: npm run cli:pack
+
+      - name: Install Worker dependencies
+        run: npm ci --prefix worker
+
+      - name: Validate Meta Worker
+        run: npm run worker:typecheck
