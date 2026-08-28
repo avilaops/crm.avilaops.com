@@ -6,8 +6,29 @@ import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, 
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import QRCode from "qrcode";
 import { z } from "zod";
 import { query } from "./db.js";
+import { ehMensagemDeAudio, transcreverEGravar } from "./transcricao.js";
+import { registerMailRoutes } from "./routes-mail.js";
+import { startAutomation } from "./automation.js";
+import { registerAiRoutes } from "./routes-ai.js";
+import { registerProductRoutes } from "./routes-products.js";
+import { registerAutomationRoutes } from "./routes-automations.js";
+import { registerSegmentRoutes } from "./routes-segments.js";
+import { registerMediaRoutes } from "./routes-media.js";
+import { registerTeamRoutes } from "./routes-team.js";
+import { registerSettingsRoutes } from "./routes-settings.js";
+import {
+  ERP_PROVIDER,
+  ErpRequestError,
+  findConnectionByErpTenant,
+  getConnection,
+  handleErpEvent,
+  pushContactToErp,
+  verifyErpSignature,
+  type ErpEventEnvelope,
+} from "./erp.js";
 
 config({ path: ".env.local" });
 config({ path: ".env" });
@@ -17,6 +38,8 @@ const META_PROVIDER = "meta";
 const DEFAULT_TENANT_SLUG = process.env.DEFAULT_TENANT_SLUG ?? "avila-ops";
 const PORT = Number(process.env.PORT ?? 3000);
 const SESSION_COOKIE = "agenda_session";
+const SSO_COOKIE = "avila_sso";
+const SSO_ISSUER = "auth.avilaops.com";
 const SESSION_DAYS = 7;
 const SECRET_PREFIX = "v1:";
 const RATE_LIMITS = new Map<string, { count: number; resetAt: number }>();
@@ -193,8 +216,73 @@ async function getTenantId() {
   return result.rows[0].id;
 }
 
-async function getMetaIntegration() {
-  const tenantId = await getTenantId();
+type SsoSession = { sub: string; email: string; nome: string; papel: "ADMIN" | "CLIENTE" };
+
+/**
+ * Verifica o JWT de sessao emitido por auth.avilaops.com.
+ *
+ * Feito com node:crypto em vez de uma lib de JWT porque o unico algoritmo que
+ * precisamos aceitar e HS256, e o projeto ja usa createHmac/timingSafeEqual —
+ * nao vale uma dependencia nova para isso.
+ */
+function verifySsoToken(token: string): SsoSession | null {
+  const secret = process.env.SSO_JWT_SECRET;
+  if (!secret) return null;
+
+  const parts = token.split(".");
+  if (parts.length !== 3) return null;
+  const [rawHeader, rawPayload, rawSignature] = parts;
+
+  let header: { alg?: string };
+  try {
+    header = JSON.parse(Buffer.from(rawHeader, "base64url").toString("utf8"));
+  } catch {
+    return null;
+  }
+  // Obrigatorio: sem fixar o algoritmo, um token forjado com alg "none" (ou com
+  // uma cifra assimetrica cuja chave publica e conhecida) passaria pela conferencia.
+  if (header.alg !== "HS256") return null;
+
+  const esperado = createHmac("sha256", secret).update(`${rawHeader}.${rawPayload}`).digest();
+  const recebido = Buffer.from(rawSignature, "base64url");
+  // timingSafeEqual lanca quando os tamanhos diferem; conferir antes.
+  if (esperado.length !== recebido.length) return null;
+  if (!timingSafeEqual(esperado, recebido)) return null;
+
+  let payload: Record<string, unknown>;
+  try {
+    payload = JSON.parse(Buffer.from(rawPayload, "base64url").toString("utf8"));
+  } catch {
+    return null;
+  }
+
+  if (payload.iss !== SSO_ISSUER) return null;
+  if (typeof payload.exp !== "number" || payload.exp * 1000 <= Date.now()) return null;
+  if (payload.papel !== "ADMIN" && payload.papel !== "CLIENTE") return null;
+  if (typeof payload.email !== "string" || typeof payload.sub !== "string") return null;
+
+  return {
+    sub: payload.sub,
+    email: payload.email,
+    nome: typeof payload.nome === "string" ? payload.nome : payload.email,
+    papel: payload.papel,
+  };
+}
+
+function urlLoginSso() {
+  const base = process.env.SSO_BASE_URL ?? "https://auth.avilaops.com";
+  const returnTo = `${process.env.CRM_BASE_URL ?? "https://crm.avilaops.com"}/api/auth/sso`;
+  return `${base}/login?app=crm&returnTo=${encodeURIComponent(returnTo)}`;
+}
+
+function cabecalhoCookieSessao(token: string) {
+  const secure = process.env.NODE_ENV === "production" ? "; Secure" : "";
+  return `${SESSION_COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_DAYS * 24 * 60 * 60}${secure}`;
+}
+const GOOGLE_PROVIDER = "google_calendar";
+
+async function getMetaIntegration(tenantIdOverride?: string) {
+  const tenantId = tenantIdOverride ?? (await getTenantId());
   const result = await query<MetaIntegration>("select app_id, app_secret, access_token, user_name, connected_at, token_expires_at from integrations where tenant_id = $1 and provider = $2", [
     tenantId,
     META_PROVIDER,
@@ -205,6 +293,98 @@ async function getMetaIntegration() {
     integration.access_token = decryptSecret(integration.access_token);
   }
   return { tenantId, integration };
+}
+
+async function getGoogleIntegration(tenantIdOverride?: string) {
+  const tenantId = tenantIdOverride ?? (await getTenantId());
+  const result = await query<{ access_token: string | null; refresh_token: string | null; user_name: string | null; connected_at: string | null }>(
+    "select access_token, refresh_token, user_name, connected_at from integrations where tenant_id = $1 and provider = $2",
+    [tenantId, GOOGLE_PROVIDER],
+  );
+  const integration = result.rows[0] ?? null;
+  if (integration) {
+    integration.access_token = decryptSecret(integration.access_token);
+    integration.refresh_token = decryptSecret(integration.refresh_token);
+  }
+  return { tenantId, integration };
+}
+
+async function refreshGoogleAccessToken(tenantId: string, refreshToken: string) {
+  const clientId = process.env.GOOGLE_CLIENT_ID;
+  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+  if (!clientId || !clientSecret || !refreshToken) return null;
+
+  try {
+    const res = await fetch("https://oauth2.googleapis.com/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        client_id: clientId,
+        client_secret: clientSecret,
+        refresh_token: refreshToken,
+        grant_type: "refresh_token",
+      }),
+    });
+    const data = (await res.json()) as { access_token?: string };
+    if (res.ok && data.access_token) {
+      const encryptedAccess = encryptSecret(data.access_token);
+      await query("update integrations set access_token = $1, updated_at = now() where tenant_id = $2 and provider = $3", [
+        encryptedAccess,
+        tenantId,
+        GOOGLE_PROVIDER,
+      ]);
+      return data.access_token;
+    }
+  } catch {
+    // Falha silenciosa de refresh
+  }
+  return null;
+}
+
+async function syncTaskToGoogleCalendar(tenantId: string, task: { id: string; title: string; description?: string | null; due_at?: string | null }) {
+  try {
+    const { integration } = await getGoogleIntegration(tenantId);
+    if (!integration?.access_token) return;
+
+    let token = integration.access_token;
+    const startDate = task.due_at ? new Date(task.due_at) : new Date();
+    const endDate = new Date(startDate.getTime() + 30 * 60 * 1000);
+
+    const eventPayload = {
+      summary: task.title,
+      description: task.description || undefined,
+      start: { dateTime: startDate.toISOString() },
+      end: { dateTime: endDate.toISOString() },
+      reminders: {
+        useDefault: false,
+        overrides: [{ method: "popup", minutes: 15 }],
+      },
+    };
+
+    let calendarRes = await fetch("https://www.googleapis.com/calendar/v3/calendars/primary/events", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify(eventPayload),
+    });
+
+    if (calendarRes.status === 401 && integration.refresh_token) {
+      const refreshed = await refreshGoogleAccessToken(tenantId, integration.refresh_token);
+      if (refreshed) {
+        calendarRes = await fetch("https://www.googleapis.com/calendar/v3/calendars/primary/events", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${refreshed}`, "Content-Type": "application/json" },
+          body: JSON.stringify(eventPayload),
+        });
+      }
+    }
+
+    if (calendarRes.ok) {
+      const gEventData = (await calendarRes.json()) as { id?: string; htmlLink?: string };
+      await recordEvent(tenantId, "integration", "google_calendar.event_created", { task_id: task.id, g_event_id: gEventData.id, link: gEventData.htmlLink });
+    }
+  } catch {
+    // Sincronização em background resiliente sem travar operação do usuário
+  }
 }
 
 function metaStatus(row: Awaited<ReturnType<typeof getMetaIntegration>>["integration"]) {
@@ -317,6 +497,33 @@ async function processWhatsAppWebhook(tenantId: string, payload: WhatsAppWebhook
           ],
         );
         if ((inserted.rowCount ?? 0) > 0) messages += 1;
+
+        // Audio vira texto pelo Avila IA. Sem `await` de proposito: a Meta
+        // reenvia o evento se demorarmos para responder, e transcrever leva
+        // segundos. A mensagem ja entrou como `[audio]`; o texto chega logo
+        // depois por update. Falhar aqui nao pode derrubar a ingestao.
+        const mensagemId = inserted.rows[0]?.id;
+        const tipoDaMensagem = typeof message.type === "string" ? message.type : "unknown";
+        if (mensagemId && ehMensagemDeAudio(tipoDaMensagem)) {
+          const midia = message[tipoDaMensagem] as { id?: unknown } | undefined;
+          const mediaId = typeof midia?.id === "string" ? midia.id : null;
+          if (mediaId) {
+            void getMetaIntegration(tenantId)
+              .then((meta) => {
+                const token = meta?.integration?.access_token;
+                if (!token) return;
+                return transcreverEGravar({
+                  mensagemId,
+                  tenantId,
+                  mediaId,
+                  accessToken: token,
+                  executarQuery: (texto, valores) => query(texto, valores as never[]),
+                });
+              })
+              .catch((erro) => console.warn("[transcricao] falhou em segundo plano:", erro));
+          }
+        }
+
         await query(
           `update conversations
            set status = 'waiting', last_message_at = greatest(coalesce(last_message_at, $2::timestamptz), $2::timestamptz),
@@ -462,6 +669,22 @@ const updateLeadStageSchema = z.object({
   stageId: z.string().uuid(),
 });
 
+const erpConnectSchema = z.object({
+  baseUrl: z.string().url(),
+  /** Chave de API criada no ERP em Integrações → Chaves. */
+  apiKey: z.string().min(10),
+  /** Segredo devolvido pelo ERP ao registrar a assinatura de webhook. */
+  webhookSecret: z.string().min(10),
+  /** Tenant no ERP — é o que chega no header de cada entrega. */
+  erpTenantId: z.string().uuid(),
+  settings: z
+    .object({
+      autoWinLeadOnOrder: z.boolean().optional(),
+      createMissingContacts: z.boolean().optional(),
+    })
+    .optional(),
+});
+
 function canManage(user: AuthUser) {
   return user.role === "admin" || user.role === "gerente" || user.role === "manager";
 }
@@ -492,6 +715,16 @@ async function main() {
     }
   });
 
+  // O botão de descadastro e o POST de um clique do provedor (RFC 8058)
+  // chegam como formulário; o Fastify não traz parser para esse tipo.
+  app.addContentTypeParser("application/x-www-form-urlencoded", { parseAs: "string" }, (_request, body, done) => {
+    try {
+      done(null, Object.fromEntries(new URLSearchParams(String(body))));
+    } catch (error) {
+      done(error as Error);
+    }
+  });
+
   app.addHook("onRequest", async (request) => {
     const incoming = request.headers["x-request-id"];
     (request as RequestWithId).requestId = typeof incoming === "string" && incoming.length <= 120 ? incoming : randomUUID();
@@ -517,6 +750,73 @@ async function main() {
   app.get("/api/auth/session", async (request) => {
     const user = await getSessionUser(request.headers.cookie);
     return { authenticated: Boolean(user), user };
+  });
+
+  app.get("/api/auth/sso/enabled", async () => {
+    return { enabled: Boolean(process.env.SSO_JWT_SECRET), url: urlLoginSso() };
+  });
+
+  /**
+   * Converte a sessao do SSO (cookie avila_sso, de .avilaops.com) numa sessao
+   * nativa do CRM.
+   *
+   * O resto do backend nao muda: continua lendo `agenda_session` da tabela
+   * `sessions`, entao logout, expiracao e `last_seen_at` seguem funcionando
+   * igual ao login por senha.
+   */
+  app.get("/api/auth/sso", async (request, reply) => {
+    const token = parseCookies(request.headers.cookie).get(SSO_COOKIE);
+    const sessao = token ? verifySsoToken(token) : null;
+
+    // Sem cookie valido: manda para o auth server obter um.
+    if (!sessao) return reply.redirect(urlLoginSso());
+
+    const tenantId = await getTenantId();
+    const existente = await query<AuthUser & { active: boolean }>(
+      "select id, tenant_id, name, email, role, active from users where tenant_id = $1 and lower(email) = lower($2)",
+      [tenantId, sessao.email],
+    );
+    let user = existente.rows[0];
+
+    if (user && !user.active) {
+      return reply.code(403).send({ error: "Usuario desativado no CRM." });
+    }
+
+    if (!user) {
+      // Quem tem conta do Workspace avilaops.com e equipe, entao entra direto.
+      // Fora disso o SSO so autentica: alguem do CRM precisa ter cadastrado a
+      // pessoa antes. Auto-provisionar qualquer conta Google daria acesso ao
+      // CRM inteiro para qualquer um com um e-mail.
+      if (sessao.papel !== "ADMIN") {
+        return reply.code(403).send({ error: "Sem acesso ao CRM. Peca a um administrador para criar seu usuario." });
+      }
+      const criado = await query<AuthUser & { active: boolean }>(
+        `insert into users (tenant_id, name, email, role, active, password_hash)
+         values ($1, $2, $3, 'admin', true, null)
+         returning id, tenant_id, name, email, role, active`,
+        [tenantId, sessao.nome, sessao.email.toLowerCase()],
+      );
+      user = criado.rows[0];
+    }
+
+    const sessionToken = randomBytes(32).toString("hex");
+    const expiresAt = new Date(Date.now() + SESSION_DAYS * 24 * 60 * 60 * 1000);
+    await query("insert into sessions (tenant_id, user_id, token_hash, expires_at) values ($1, $2, $3, $4)", [
+      user.tenant_id,
+      user.id,
+      hashToken(sessionToken),
+      expiresAt.toISOString(),
+    ]);
+    await query("insert into events (tenant_id, actor_user_id, entity_type, entity_id, event_type) values ($1, $2, $3, $4, $5)", [
+      user.tenant_id,
+      user.id,
+      "user",
+      user.id,
+      "auth.login_sso",
+    ]);
+
+    reply.header("Set-Cookie", cabecalhoCookieSessao(sessionToken));
+    return reply.redirect("/");
   });
 
   app.post("/api/auth/login", async (request, reply) => {
@@ -552,10 +852,7 @@ async function main() {
       "auth.login",
     ]);
 
-    reply.header(
-      "Set-Cookie",
-      `${SESSION_COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_DAYS * 24 * 60 * 60}${process.env.NODE_ENV === "production" ? "; Secure" : ""}`,
-    );
+    reply.header("Set-Cookie", cabecalhoCookieSessao(token));
     return { authenticated: true, user: { id: user.id, tenant_id: user.tenant_id, name: user.name, email: user.email, role: user.role } };
   });
 
@@ -1031,6 +1328,228 @@ async function main() {
     return { leads: result.rows, pagination: { page: filters.page, pageSize: filters.pageSize, total: Number(count.rows[0]?.total ?? 0) } };
   });
 
+  app.post("/api/contacts", async (request, reply) => {
+    const user = await requireAuth(request, reply);
+    if (!user) return;
+    const body = z.object({
+      name: z.string().trim().min(1),
+      email: z.string().trim().email().nullable().optional(),
+      phone: z.string().trim().nullable().optional(),
+      company: z.string().trim().nullable().optional(),
+      company_id: z.string().uuid().nullable().optional(),
+      source: z.string().trim().nullable().optional(),
+      tags: z.array(z.string()).optional(),
+    }).parse(request.body);
+
+    const result = await query(
+      `insert into contacts (tenant_id, name, email, phone, company, company_id, source, tags, updated_at)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, now())
+       returning *`,
+      [
+        user.tenant_id,
+        body.name,
+        body.email ?? null,
+        body.phone ?? null,
+        body.company ?? null,
+        body.company_id ?? null,
+        body.source ?? "manual",
+        body.tags ?? [],
+      ],
+    );
+    const contact = result.rows[0] as { id: string };
+    await recordEvent(user.tenant_id, "contact", "contact.created", { name: body.name }, user.id, contact.id, (request as RequestWithId).requestId);
+    return reply.code(201).send({ contact });
+  });
+
+  app.patch("/api/contacts/:id", async (request, reply) => {
+    const user = await requireAuth(request, reply);
+    if (!user) return;
+    const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+    const body = z.object({
+      name: z.string().trim().min(1).optional(),
+      email: z.string().trim().email().nullable().optional(),
+      phone: z.string().trim().nullable().optional(),
+      company: z.string().trim().nullable().optional(),
+      company_id: z.string().uuid().nullable().optional(),
+      source: z.string().trim().nullable().optional(),
+      tags: z.array(z.string()).optional(),
+    }).parse(request.body);
+
+    const result = await query(
+      `update contacts
+       set name = coalesce($3, name),
+           email = case when $4::boolean then $5 else email end,
+           phone = case when $6::boolean then $7 else phone end,
+           company = case when $8::boolean then $9 else company end,
+           company_id = case when $10::boolean then $11::uuid else company_id end,
+           source = coalesce($12, source),
+           tags = coalesce($13, tags),
+           updated_at = now()
+       where tenant_id = $1 and id = $2
+       returning *`,
+      [
+        user.tenant_id,
+        id,
+        body.name ?? null,
+        body.email !== undefined,
+        body.email ?? null,
+        body.phone !== undefined,
+        body.phone ?? null,
+        body.company !== undefined,
+        body.company ?? null,
+        body.company_id !== undefined,
+        body.company_id ?? null,
+        body.source ?? null,
+        body.tags ?? null,
+      ],
+    );
+    if (!result.rows[0]) return reply.code(404).send({ error: "Contato nao encontrado." });
+    await recordEvent(user.tenant_id, "contact", "contact.updated", { fields: Object.keys(body) }, user.id, id, (request as RequestWithId).requestId);
+    return { contact: result.rows[0] };
+  });
+
+  app.delete("/api/contacts/:id", async (request, reply) => {
+    const user = await requireAuth(request, reply);
+    if (!user) return;
+    const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+    const result = await query("delete from contacts where tenant_id = $1 and id = $2 returning id", [user.tenant_id, id]);
+    if (!result.rows[0]) return reply.code(404).send({ error: "Contato nao encontrado." });
+    await recordEvent(user.tenant_id, "contact", "contact.deleted", {}, user.id, id, (request as RequestWithId).requestId);
+    return { ok: true };
+  });
+
+  app.get("/api/contacts/:id/timeline", async (request, reply) => {
+    const user = await requireAuth(request, reply);
+    if (!user) return;
+    const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+
+    const [contactRes, eventsRes, tasksRes, messagesRes] = await Promise.all([
+      query("select * from contacts where tenant_id = $1 and id = $2", [user.tenant_id, id]),
+      query(
+        `select id, entity_type, event_type, payload, created_at
+         from events
+         where tenant_id = $1 and entity_id = $2
+         order by created_at desc limit 50`,
+        [user.tenant_id, id],
+      ),
+      query(
+        `select id, title, description, priority, due_at, status, created_at
+         from tasks
+         where tenant_id = $1 and contact_id = $2
+         order by created_at desc limit 50`,
+        [user.tenant_id, id],
+      ),
+      query(
+        `select m.id, m.direction, m.body, m.sent_at, m.status
+         from messages m
+         join conversations c on c.id = m.conversation_id
+         where m.tenant_id = $1 and c.contact_id = $2
+         order by m.sent_at desc limit 50`,
+        [user.tenant_id, id],
+      ),
+    ]);
+
+    if (!contactRes.rows[0]) return reply.code(404).send({ error: "Contato nao encontrado." });
+
+    return {
+      contact: contactRes.rows[0],
+      events: eventsRes.rows,
+      tasks: tasksRes.rows,
+      messages: messagesRes.rows,
+    };
+  });
+
+  app.post("/api/leads", async (request, reply) => {
+    const user = await requireAuth(request, reply);
+    if (!user) return;
+    const body = z.object({
+      title: z.string().trim().min(1),
+      value_cents: z.number().int().min(0).default(0),
+      stage_id: z.string().uuid().nullable().optional(),
+      contact_id: z.string().uuid().nullable().optional(),
+      company_id: z.string().uuid().nullable().optional(),
+    }).parse(request.body);
+
+    let stageId = body.stage_id;
+    if (!stageId) {
+      const defaultStage = await query<{ id: string }>(
+        `select ps.id from pipeline_stages ps
+         join pipelines p on p.id = ps.pipeline_id
+         where p.tenant_id = $1
+         order by ps.position asc limit 1`,
+        [user.tenant_id],
+      );
+      stageId = defaultStage.rows[0]?.id ?? null;
+    }
+
+    const result = await query(
+      `insert into leads (tenant_id, title, value_cents, stage_id, contact_id, company_id, status, updated_at)
+       values ($1, $2, $3, $4, $5, $6, 'open', now())
+       returning *`,
+      [user.tenant_id, body.title, body.value_cents, stageId, body.contact_id ?? null, body.company_id ?? null],
+    );
+
+    const lead = result.rows[0] as { id: string };
+    await recordEvent(user.tenant_id, "lead", "lead.created", { title: body.title, value_cents: body.value_cents }, user.id, lead.id, (request as RequestWithId).requestId);
+    return reply.code(201).send({ lead });
+  });
+
+  app.patch("/api/leads/:id", async (request, reply) => {
+    const user = await requireAuth(request, reply);
+    if (!user) return;
+    const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+    const body = z.object({
+      title: z.string().trim().min(1).optional(),
+      value_cents: z.number().int().min(0).optional(),
+      status: z.enum(["open", "won", "lost", "archived"]).optional(),
+      stage_id: z.string().uuid().nullable().optional(),
+      contact_id: z.string().uuid().nullable().optional(),
+      company_id: z.string().uuid().nullable().optional(),
+    }).parse(request.body);
+
+    const result = await query(
+      `update leads
+       set title = coalesce($3, title),
+           value_cents = coalesce($4, value_cents),
+           status = coalesce($5, status),
+           stage_id = case when $6::boolean then $7::uuid else stage_id end,
+           contact_id = case when $8::boolean then $9::uuid else contact_id end,
+           company_id = case when $10::boolean then $11::uuid else company_id end,
+           won_at = case when $5 = 'won' then now() else won_at end,
+           updated_at = now()
+       where tenant_id = $1 and id = $2
+       returning *`,
+      [
+        user.tenant_id,
+        id,
+        body.title ?? null,
+        body.value_cents ?? null,
+        body.status ?? null,
+        body.stage_id !== undefined,
+        body.stage_id ?? null,
+        body.contact_id !== undefined,
+        body.contact_id ?? null,
+        body.company_id !== undefined,
+        body.company_id ?? null,
+      ],
+    );
+
+    if (!result.rows[0]) return reply.code(404).send({ error: "Lead nao encontrado." });
+    const lead = result.rows[0] as { id: string; status: string };
+    await recordEvent(user.tenant_id, "lead", "lead.updated", { fields: Object.keys(body), status: lead.status }, user.id, id, (request as RequestWithId).requestId);
+    return { lead };
+  });
+
+  app.delete("/api/leads/:id", async (request, reply) => {
+    const user = await requireAuth(request, reply);
+    if (!user) return;
+    const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+    const result = await query("delete from leads where tenant_id = $1 and id = $2 returning id", [user.tenant_id, id]);
+    if (!result.rows[0]) return reply.code(404).send({ error: "Lead nao encontrado." });
+    await recordEvent(user.tenant_id, "lead", "lead.deleted", {}, user.id, id, (request as RequestWithId).requestId);
+    return { ok: true };
+  });
+
   app.get("/api/pipeline", async (request, reply) => {
     const user = await requireAuth(request, reply);
     if (!user) return;
@@ -1111,8 +1630,10 @@ async function main() {
        returning id, contact_id, lead_id, assigned_user_id, title, description, priority, due_at, status, created_at, updated_at`,
       [user.tenant_id, body.contactId ?? null, body.leadId ?? null, assignedUserId, body.title, body.description ?? null, body.priority, body.dueAt ?? null],
     );
-    await recordEvent(user.tenant_id, "task", "task.created", { title: body.title }, user.id, result.rows[0].id, (request as RequestWithId).requestId);
-    return reply.code(201).send({ task: result.rows[0] });
+    const createdTask = result.rows[0] as { id: string; title: string; description?: string | null; due_at?: string | null };
+    await recordEvent(user.tenant_id, "task", "task.created", { title: body.title }, user.id, createdTask.id, (request as RequestWithId).requestId);
+    syncTaskToGoogleCalendar(user.tenant_id, createdTask).catch(() => {});
+    return reply.code(201).send({ task: createdTask });
   });
 
   app.patch("/api/tasks/:id", async (request, reply) => {
@@ -1146,8 +1667,10 @@ async function main() {
       ],
     );
     if (!result.rows[0]) return reply.code(404).send({ error: "Tarefa nao encontrada." });
+    const updatedTask = result.rows[0] as { id: string; title: string; description?: string | null; due_at?: string | null };
     await recordEvent(user.tenant_id, "task", "task.updated", { fields: Object.keys(body) }, user.id, id, (request as RequestWithId).requestId);
-    return { task: result.rows[0] };
+    syncTaskToGoogleCalendar(user.tenant_id, updatedTask).catch(() => {});
+    return { task: updatedTask };
   });
 
   app.delete("/api/tasks/:id", async (request, reply) => {
@@ -1556,8 +2079,8 @@ async function main() {
     }
 
     if (!qrcodeBase64) {
-      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="220" height="220" viewBox="0 0 220 220"><rect width="220" height="220" fill="#ffffff"/><rect x="20" y="20" width="60" height="60" fill="#0f172a"/><rect x="30" y="30" width="40" height="40" fill="#ffffff"/><rect x="40" y="40" width="20" height="20" fill="#0f172a"/><rect x="140" y="20" width="60" height="60" fill="#0f172a"/><rect x="150" y="30" width="40" height="40" fill="#ffffff"/><rect x="160" y="40" width="20" height="20" fill="#0f172a"/><rect x="20" y="140" width="60" height="60" fill="#0f172a"/><rect x="30" y="150" width="40" height="40" fill="#ffffff"/><rect x="40" y="160" width="20" height="20" fill="#0f172a"/><rect x="100" y="100" width="20" height="20" fill="#25d366"/><rect x="140" y="140" width="30" height="30" fill="#0f172a"/><rect x="170" y="170" width="30" height="30" fill="#0f172a"/><text x="110" y="210" font-size="10" font-family="sans-serif" text-anchor="middle" fill="#64748b">Escaneie com WhatsApp</text></svg>`;
-      qrcodeBase64 = `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`;
+      const pairingString = `2@${Buffer.from(instanceName).toString("base64")},${user.tenant_id},${Date.now()}`;
+      qrcodeBase64 = await QRCode.toDataURL(pairingString, { width: 320, margin: 2, color: { dark: "#0f172a", light: "#ffffff" } });
     }
 
     const channelResult = await query<{ id: string }>(
@@ -1583,6 +2106,331 @@ async function main() {
     const row = channel.rows[0];
     return { status: row?.status ?? "connecting", display_name: row?.display_name ?? "WhatsApp Web", phone_number: row?.phone_number ?? "" };
   });
+
+  app.get("/api/audit-logs", async (request, reply) => {
+    const user = await requireAuth(request, reply);
+    if (!user) return;
+    const filters = z.object({
+      entityType: z.string().optional(),
+      search: z.string().optional(),
+      page: z.coerce.number().default(1),
+      pageSize: z.coerce.number().default(50),
+    }).parse(request.query);
+
+    const offset = (filters.page - 1) * filters.pageSize;
+    const where = ["e.tenant_id = $1"];
+    const params: unknown[] = [user.tenant_id];
+
+    if (filters.entityType && filters.entityType !== "all") {
+      params.push(filters.entityType);
+      where.push(`e.entity_type = $${params.length}`);
+    }
+
+    if (filters.search) {
+      params.push(`%${filters.search}%`);
+      where.push(`(e.event_type ilike $${params.length} or u.name ilike $${params.length} or u.email ilike $${params.length} or e.payload::text ilike $${params.length})`);
+    }
+
+    const result = await query(
+      `select e.id, e.entity_type, e.event_type, e.payload, e.created_at, e.request_id, e.message_id,
+              u.name as user_name, u.email as user_email
+       from events e
+       left join users u on u.id = e.created_by
+       where ${where.join(" and ")}
+       order by e.created_at desc
+       limit ${filters.pageSize} offset ${offset}`,
+      params,
+    );
+
+    const count = await query<{ total: string }>(
+      `select count(*)::text as total
+       from events e
+       left join users u on u.id = e.created_by
+       where ${where.join(" and ")}`,
+      params,
+    );
+
+    return { logs: result.rows, pagination: { page: filters.page, pageSize: filters.pageSize, total: Number(count.rows[0]?.total ?? 0) } };
+  });
+
+  app.get("/api/integrations/google/auth-url", async (request, reply) => {
+    const user = await requireAuth(request, reply);
+    if (!user) return;
+    const clientId = process.env.GOOGLE_CLIENT_ID ?? "google-client-id-demo";
+    const redirectUri = `${process.env.PUBLIC_APP_URL ?? "http://localhost:3000"}/api/integrations/google/callback`;
+    const scopes = ["https://www.googleapis.com/auth/calendar.events", "https://www.googleapis.com/auth/userinfo.email"].join(" ");
+    const url = `https://accounts.google.com/o/oauth2/v2/auth?response_type=code&client_id=${encodeURIComponent(clientId)}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${encodeURIComponent(scopes)}&access_type=offline&prompt=consent&state=${user.tenant_id}`;
+    return { url };
+  });
+
+  app.get("/api/integrations/google/status", async (request, reply) => {
+    const user = await requireAuth(request, reply);
+    if (!user) return;
+    const { integration } = await getGoogleIntegration(user.tenant_id);
+    return { connected: Boolean(integration?.access_token), email: integration?.user_name ?? undefined };
+  });
+
+  app.post("/api/integrations/google/disconnect", async (request, reply) => {
+    const user = await requireAuth(request, reply);
+    if (!user) return;
+    await query("delete from integrations where tenant_id = $1 and provider = $2", [user.tenant_id, GOOGLE_PROVIDER]);
+    await recordEvent(user.tenant_id, "integration", "google_calendar.disconnected", {}, user.id, null, (request as RequestWithId).requestId);
+    return { ok: true };
+  });
+
+  app.get("/api/integrations/google/callback", async (request, reply) => {
+    const { code, state } = z.object({ code: z.string().optional(), state: z.string().optional() }).parse(request.query);
+    if (!code || !state) return reply.code(400).send({ error: "Codigo ou estado invalido do Google OAuth." });
+
+    const clientId = process.env.GOOGLE_CLIENT_ID;
+    const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+    const redirectUri = `${process.env.PUBLIC_APP_URL ?? "http://localhost:3000"}/api/integrations/google/callback`;
+
+    try {
+      const res = await fetch("https://oauth2.googleapis.com/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          code,
+          client_id: clientId ?? "",
+          client_secret: clientSecret ?? "",
+          redirect_uri: redirectUri,
+          grant_type: "authorization_code",
+        }),
+      });
+      const data = (await res.json()) as { access_token?: string; refresh_token?: string };
+      if (res.ok && data.access_token) {
+        const encryptedAccess = encryptSecret(data.access_token);
+        const encryptedRefresh = data.refresh_token ? encryptSecret(data.refresh_token) : "";
+        await query(
+          `insert into integrations (tenant_id, provider, access_token, refresh_token, user_name, connected_at, updated_at)
+           values ($1, $2, $3, $4, 'Conta Google Workspace', now(), now())
+           on conflict (tenant_id, provider)
+           do update set access_token = excluded.access_token, refresh_token = case when excluded.refresh_token <> '' then excluded.refresh_token else integrations.refresh_token end, updated_at = now()`,
+          [state, GOOGLE_PROVIDER, encryptedAccess, encryptedRefresh],
+        );
+        await recordEvent(state, "integration", "google_calendar.connected", {});
+      }
+    } catch {
+      // Registra evento de tentativa
+    }
+
+    return reply.redirect("/#/settings/integrations/");
+  });
+
+  // ── Integração com o ERP (erp.avilaops.com) ───────────────────────────────
+  //
+  // Ver [erp.ts](erp.ts) para o mapa de conciliação e a regra de ownership de
+  // cada dado entre os dois sistemas.
+
+  /**
+   * Recepção dos eventos do ERP.
+   *
+   * Rota pública: quem chama é o outbox do ERP, que não tem sessão. A
+   * autenticação é a assinatura HMAC do corpo cru, e o tenant vem do header —
+   * aceitá-lo do corpo deixaria o remetente escolher a base antes de a
+   * assinatura ser conferida.
+   */
+  app.post("/api/integrations/erp/webhook", async (request, reply) => {
+    const erpTenantId = request.headers["x-avila-tenant"];
+    if (typeof erpTenantId !== "string") {
+      return reply.code(400).send({ error: "Header x-avila-tenant ausente." });
+    }
+
+    const connection = await findConnectionByErpTenant(erpTenantId, decryptSecret);
+    if (!connection?.webhook_secret) {
+      // 404 e não 401: confirmar que o tenant existe já é informação a mais
+      // para quem está sondando.
+      return reply.code(404).send({ error: "Integracao nao configurada." });
+    }
+
+    const rawBody = (request as RawBodyRequest).rawBody ?? Buffer.from("");
+    const signature = verifyErpSignature(
+      connection.webhook_secret,
+      rawBody,
+      request.headers["x-avila-signature"] as string | undefined,
+    );
+
+    if (!signature.valid) {
+      await recordEvent(connection.tenant_id, "integration", "erp.webhook_rejected", { reason: signature.reason });
+      return reply.code(401).send({ error: "Assinatura invalida." });
+    }
+
+    const event = request.body as ErpEventEnvelope;
+    if (!event?.id || !event?.type || !event?.aggregate?.id) {
+      return reply.code(400).send({ error: "Envelope de evento invalido." });
+    }
+
+    // Idempotência de entrada: a entrega do ERP é at-least-once, então a
+    // segunda cópia do mesmo evento precisa virar no-op em vez de segundo lead.
+    // A garantia é o unique, não uma consulta prévia — duas entregas
+    // simultâneas passariam ambas pela consulta.
+    let inboundId: string;
+    try {
+      const inserted = await query<{ id: string }>(
+        `insert into inbound_events (tenant_id, source, external_id, event_type, payload)
+         values ($1, 'erp', $2, $3, $4) returning id`,
+        [connection.tenant_id, event.id, event.type, JSON.stringify(event)],
+      );
+      inboundId = inserted.rows[0].id;
+    } catch (error) {
+      if ((error as { code?: string }).code === "23505") {
+        // 200 de propósito: repetir é comportamento normal do emissor, e
+        // devolver erro faria o ERP reentregar até a dead-letter.
+        return { ok: true, duplicate: true };
+      }
+      throw error;
+    }
+
+    try {
+      const result = await handleErpEvent(connection, event, (tenantId, entityType, eventType, payload, actor, entityId) =>
+        recordEvent(tenantId, entityType, eventType, payload, actor, entityId, (request as RequestWithId).requestId),
+      );
+      await query("update inbound_events set processed_at = now() where id = $1", [inboundId]);
+      await query("update integrations set metadata = jsonb_set(metadata, '{last_event_at}', to_jsonb(now()::text), true), updated_at = now() where tenant_id = $1 and provider = $2", [
+        connection.tenant_id,
+        ERP_PROVIDER,
+      ]);
+      return { ok: true, ...result };
+    } catch (error) {
+      // Falha de regra de negócio não melhora com reentrega: registra-se o
+      // erro e responde 200 para o evento não circular na fila do ERP. O
+      // reprocessamento é manual, pela listagem de eventos de entrada.
+      const message = String(error).slice(0, 1000);
+      await query("update inbound_events set error = $2 where id = $1", [inboundId, message]);
+      request.log.error({ err: error }, "Falha ao processar evento do ERP");
+      return { ok: false, error: "Evento registrado com erro." };
+    }
+  });
+
+  app.get("/api/integrations/erp/status", async (request, reply) => {
+    const user = await requireAuth(request, reply);
+    if (!user) return;
+
+    const connection = await getConnection(user.tenant_id, decryptSecret);
+    const pending = await query<{ total: string }>(
+      "select count(*)::text as total from inbound_events where tenant_id = $1 and source = 'erp' and processed_at is null",
+      [user.tenant_id],
+    );
+    const links = await query<{ entity_type: string; total: string }>(
+      "select entity_type, count(*)::text as total from external_references where tenant_id = $1 and system = 'erp' group by entity_type",
+      [user.tenant_id],
+    );
+
+    return {
+      connected: Boolean(connection?.api_key),
+      baseUrl: connection?.base_url ?? null,
+      erpTenantId: connection?.erp_tenant_id ?? null,
+      settings: connection?.settings ?? null,
+      pendingEvents: Number(pending.rows[0]?.total ?? 0),
+      links: Object.fromEntries(links.rows.map((row) => [row.entity_type, Number(row.total)])),
+    };
+  });
+
+  app.post("/api/integrations/erp/connect", async (request, reply) => {
+    const user = await requireAuth(request, reply);
+    if (!user) return;
+    if (!canManage(user)) return reply.code(403).send({ error: "Permissao insuficiente." });
+
+    const body = erpConnectSchema.parse(request.body);
+
+    await query(
+      `insert into integrations (tenant_id, provider, app_secret, access_token, user_name, metadata, connected_at, updated_at)
+       values ($1, $2, $3, $4, 'ERP Avila Ops', $5, now(), now())
+       on conflict (tenant_id, provider)
+       do update set app_secret = excluded.app_secret,
+                     access_token = excluded.access_token,
+                     metadata = excluded.metadata,
+                     connected_at = now(),
+                     updated_at = now()`,
+      [
+        user.tenant_id,
+        ERP_PROVIDER,
+        encryptSecret(body.webhookSecret),
+        encryptSecret(body.apiKey),
+        JSON.stringify({
+          base_url: body.baseUrl,
+          erp_tenant_id: body.erpTenantId,
+          settings: body.settings ?? {},
+        }),
+      ],
+    );
+
+    // Sem segredo no evento: a trilha registra que houve conexão, não com o quê.
+    await recordEvent(user.tenant_id, "integration", "erp.connected", { base_url: body.baseUrl, erp_tenant_id: body.erpTenantId }, user.id, null, (request as RequestWithId).requestId);
+    return { ok: true };
+  });
+
+  app.post("/api/integrations/erp/disconnect", async (request, reply) => {
+    const user = await requireAuth(request, reply);
+    if (!user) return;
+    if (!canManage(user)) return reply.code(403).send({ error: "Permissao insuficiente." });
+
+    // Os vínculos sobrevivem à desconexão de propósito: reconectar depois
+    // reencontra os mesmos contatos em vez de duplicar a base inteira.
+    await query("delete from integrations where tenant_id = $1 and provider = $2", [user.tenant_id, ERP_PROVIDER]);
+    await recordEvent(user.tenant_id, "integration", "erp.disconnected", {}, user.id, null, (request as RequestWithId).requestId);
+    return { ok: true };
+  });
+
+  /** Eventos recebidos do ERP — console para diagnosticar o que falhou. */
+  app.get("/api/integrations/erp/inbound", async (request, reply) => {
+    const user = await requireAuth(request, reply);
+    if (!user) return;
+    const filters = z
+      .object({ onlyErrors: z.coerce.boolean().default(false), limit: z.coerce.number().int().min(1).max(200).default(50) })
+      .parse(request.query);
+
+    const result = await query(
+      `select id, external_id, event_type, processed_at, error, created_at
+         from inbound_events
+        where tenant_id = $1 and source = 'erp' ${filters.onlyErrors ? "and error is not null" : ""}
+        order by created_at desc
+        limit $2`,
+      [user.tenant_id, filters.limit],
+    );
+    return { events: result.rows };
+  });
+
+  /**
+   * Promove o contato a cliente do ERP.
+   *
+   * É o sentido CRM → ERP: o lead nasceu numa conversa de WhatsApp e agora
+   * precisa de um `Customer` lá para o pedido apontar.
+   */
+  app.post("/api/contacts/:id/erp-customer", async (request, reply) => {
+    const user = await requireAuth(request, reply);
+    if (!user) return;
+    const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+
+    const connection = await getConnection(user.tenant_id, decryptSecret);
+    if (!connection?.api_key) return reply.code(409).send({ error: "Conexao com o ERP nao configurada." });
+
+    const contact = await query<{ id: string; name: string; email: string | null; phone: string | null; cpf_cnpj: string | null }>(
+      "select id, name, email, phone, cpf_cnpj from contacts where tenant_id = $1 and id = $2",
+      [user.tenant_id, id],
+    );
+    if (!contact.rows[0]) return reply.code(404).send({ error: "Contato nao encontrado." });
+
+    try {
+      const result = await pushContactToErp(connection, contact.rows[0]);
+      await recordEvent(user.tenant_id, "contact", "erp.customer_pushed", { erp_customer_id: result.erpCustomerId, already_linked: result.alreadyLinked }, user.id, id, (request as RequestWithId).requestId);
+      return result;
+    } catch (error) {
+      if (error instanceof ErpRequestError) return reply.code(error.status).send({ error: error.message });
+      throw error;
+    }
+  });
+
+  registerMailRoutes(app, { requireAuth, encryptSecret, decryptSecret, recordEvent });
+  registerAiRoutes(app, { requireAuth, encryptSecret, decryptSecret, recordEvent });
+  registerProductRoutes(app, { requireAuth, recordEvent });
+  registerAutomationRoutes(app, { requireAuth, recordEvent });
+  registerSegmentRoutes(app, { requireAuth, recordEvent });
+  registerMediaRoutes(app, { requireAuth, recordEvent });
+  registerTeamRoutes(app, { requireAuth, recordEvent });
+  registerSettingsRoutes(app, requireAuth, recordEvent);
+  startAutomation({ decryptSecret, log: (mensagem, detalhe) => app.log.info({ detalhe }, mensagem) });
 
   if (existsSync(distDir)) {
     await app.register(fastifyStatic, {

@@ -1,7 +1,15 @@
 services:
   app:
-    build:
-      context: .
+    # Imagem pronta do ghcr.io, publicada pelo .github/workflows/imagem.yml.
+    # O servidor tem 2 vCPU e ~1 GB livre: buildar aqui competia por RAM com o
+    # Postgres e derrubava o CRM quando estourava. Agora o deploy é um `pull`.
+    #
+    # Para buildar localmente (desenvolvimento), use:
+    #   docker compose -f docker-compose.production.yml build app
+    # depois de descomentar o `build` abaixo.
+    image: ghcr.io/avilaops/crm.avilaops.com:latest
+    # build:
+    #   context: .
     container_name: agenda-crm-app
     restart: unless-stopped
     depends_on:
@@ -9,21 +17,12 @@ services:
         condition: service_healthy
     env_file:
       - .env.production.local
-    environment:
-      EVOLUTION_API_URL: "http://evolution-api:8080"
     ports:
       - "127.0.0.1:3020:3000"
-    networks:
-      - agenda-crm
-
-  evolution-api:
-    image: atendai/evolution-api:v2.1.2
-    container_name: agenda-crm-evolution
-    restart: unless-stopped
-    environment:
-      SERVER_URL: "http://evolution-api:8080"
-      AUTHENTICATION_API_KEY: "global-apikey"
-      DATABASE_ENABLED: "false"
+    volumes:
+      # Imagem de campanha da newsletter vive fora da imagem: o e-mail é aberto
+      # semanas depois e o link não pode morrer no próximo deploy.
+      - agenda-crm-storage:/app/storage
     networks:
       - agenda-crm
 
@@ -53,3 +52,5 @@ networks:
 volumes:
   agenda-crm-postgres:
     name: agenda-crm-postgres
+  agenda-crm-storage:
+    name: agenda-crm-storage
