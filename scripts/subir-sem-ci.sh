@@ -87,6 +87,19 @@ DOCKER_BUILDKIT=0 docker build -q -t $IMAGEM:latest .
 
 cd $PASTA/current
 docker compose --env-file .env.production.local -f docker-compose.production.yml up -d --force-recreate app
+
+# O schema é idempotente, mas precisa rodar a cada deploy: foi a ausência desta
+# etapa que deixou 8 tabelas (products, segments, media_files, automation_rules,
+# team_channels, team_messages, tenant_settings, knowledge_sources) fora do
+# banco de produção até 01/09/2026. O \`deploy.sh\` já migrava; aqui faltava.
+echo "· esperando o banco aceitar conexão"
+for i in \$(seq 1 20); do
+  docker compose --env-file .env.production.local -f docker-compose.production.yml exec -T db pg_isready -U agenda_crm -d agenda_crm >/dev/null 2>&1 && break
+  sleep 2
+done
+
+echo "· migrando o schema"
+docker compose --env-file .env.production.local -f docker-compose.production.yml exec -T app npm run db:migrate
 REMOTO
 
 echo "▸ conferindo"

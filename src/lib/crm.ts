@@ -383,7 +383,6 @@ export interface AuditLogEntry {
   event_type: string
   payload: Record<string, unknown>
   request_id?: string
-  message_id?: string
   user_name?: string
   user_email?: string
   created_at: string
