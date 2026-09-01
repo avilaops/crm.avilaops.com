@@ -30,7 +30,11 @@ services:
     # Subiu do 16 para o 18 em 01/09/2026, para o servidor bater com o ambiente
     # de desenvolvimento. Um data directory do 16 não é legível pelo 18, então a
     # troca foi por dump e restore, não por troca de imagem.
-    image: postgres:18-alpine
+    #
+    # Tag com o patch fixo de propósito: postgres:18-alpine flutua, e um pull
+    # futuro traria 18.7 sem ninguém decidir isso. Para subir de patch, troque
+    # aqui — assim a mudança aparece no diff.
+    image: postgres:18.6-alpine
     container_name: agenda-crm-db
     restart: unless-stopped
     env_file:
