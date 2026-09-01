@@ -51,7 +51,7 @@ npm run build
 echo "▸ empacotando"
 PACOTE="$(mktemp -t crm-dist-XXXXXX.tgz)"
 trap 'rm -f "$PACOTE"' EXIT
-tar czf "$PACOTE" dist dist-server backend
+tar czf "$PACOTE" dist dist-server backend scripts
 echo "· $(du -h "$PACOTE" | cut -f1)"
 
 echo "▸ enviando"
@@ -64,6 +64,13 @@ ssh "$SERVIDOR" "bash -s" <<REMOTO
 set -euo pipefail
 cd $PASTA/deploy-local
 tar xzf dist.tgz
+
+# Os scripts operacionais vivem no host, não na imagem: quem chama o backup é o
+# cron do sistema, em $PASTA/current/scripts. Como o current é um release
+# desempacotado (não um clone git), um conserto no repositório só chegava aqui
+# num release completo — foi assim que o backup quebrado de 11/08 continuou
+# rodando. Sincronizar aqui mantém o host e o repositório de acordo.
+install -m 755 scripts/*.sh $PASTA/current/scripts/
 
 # Guarda a imagem que está no ar antes de mexer: voltar atrás é um
 # \`docker tag\` e um \`up -d\`.
