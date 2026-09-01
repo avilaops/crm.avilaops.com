@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import AccountSelect from '../components/layout/AccountSelect'
+import Login from '../components/layout/Login'
 import Copilot from '../components/layout/Copilot'
 import Sidebar from '../components/layout/Sidebar'
 import KnowledgeModal from '../components/modals/KnowledgeModal'
@@ -15,7 +15,7 @@ type CrmWorkspaceProps = {
 }
 
 function CrmWorkspace({ initialPage, onPageChange }: CrmWorkspaceProps) {
-  const [screen, setScreen] = useState<Screen>('accounts')
+  const [screen, setScreen] = useState<Screen>('login')
   const [page, setPageState] = useState<Page>(initialPage)
   const [leadSourceModal, setLeadSourceModal] = useState<LeadSource | null>(null)
   const [knowledgeModal, setKnowledgeModal] = useState(false)
@@ -29,8 +29,8 @@ function CrmWorkspace({ initialPage, onPageChange }: CrmWorkspaceProps) {
     onPageChange(nextPage)
   }
 
-  if (screen === 'accounts') {
-    return <AccountSelect onEnter={() => setScreen('app')} />
+  if (screen === 'login') {
+    return <Login onEnter={() => setScreen('app')} />
   }
 
   const inSettings =

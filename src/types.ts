@@ -1,4 +1,4 @@
-export type Screen = 'accounts' | 'app'
+export type Screen = 'login' | 'app'
 
 export type Page =
   | 'home'
