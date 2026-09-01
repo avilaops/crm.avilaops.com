@@ -6,6 +6,7 @@ export const pageToPath: Record<Page, string> = {
   home: '/',
   'chat-inbox': '/communications/inbox/',
   'mail-inbox': '/mail/inbox/',
+  newsletter: '/mail/newsletter/',
   'team-chat': '/communications/team/',
   pipeline: '/leads/pipeline/',
   leads: '/leads/list/',
@@ -29,6 +30,7 @@ export const pageToPath: Record<Page, string> = {
   integrations: '/settings/integrations/',
   'lead-sources': '/settings/pipeline/leads/',
   channels: '/settings/channels/',
+  'audit-logs': '/settings/audit-logs/',
 }
 
 const pathToPage = new Map<string, Page>(

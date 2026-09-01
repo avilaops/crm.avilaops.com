@@ -209,7 +209,19 @@ function LeadSourceModal({
             <div className={`grid h-28 w-28 place-items-center rounded-full ${config.iconBg}`}><Icon size={48} /></div>
             <h2 className="mt-8 text-2xl">{config.connectTitle}</h2>
             <p className="mt-3 max-w-xl text-slate-500">{config.connectBody}</p>
-            {error && <p className="mt-4 rounded border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-600">{error}</p>}
+            {error && (
+              <div className="mt-4 rounded border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+                <p className="font-semibold">{error}</p>
+                {source === 'whatsapp' && (
+                  <button
+                    className="mt-2 text-xs font-bold text-blue-600 hover:underline"
+                    onClick={() => setStep('install')}
+                  >
+                    👉 Clique aqui para conectar instantaneamente via QR Code pelo celular
+                  </button>
+                )}
+              </div>
+            )}
             <div className="mt-8 flex gap-3">
               <button
                 className="rounded bg-blue-600 px-5 py-2 text-sm font-semibold text-white disabled:opacity-60"
@@ -218,17 +230,26 @@ function LeadSourceModal({
               >
                 {connecting ? 'Abrindo login da Meta...' : config.connectActions[0]}
               </button>
-              <button
-                className="rounded border border-slate-200 px-5 py-2 text-sm font-semibold disabled:opacity-60"
-                onClick={handleConnect}
-                disabled={connecting}
-              >
-                {config.connectActions[1]}
-              </button>
+              {source === 'whatsapp' ? (
+                <button
+                  className="rounded border border-emerald-300 bg-emerald-50 px-5 py-2 text-sm font-semibold text-emerald-700 hover:bg-emerald-100"
+                  onClick={() => setStep('install')}
+                >
+                  Conectar via QR Code
+                </button>
+              ) : (
+                <button
+                  className="rounded border border-slate-200 px-5 py-2 text-sm font-semibold disabled:opacity-60"
+                  onClick={handleConnect}
+                  disabled={connecting}
+                >
+                  {config.connectActions[1]}
+                </button>
+              )}
             </div>
             <div className="mt-8 flex items-center justify-between rounded border border-slate-200 p-4 text-sm text-slate-600">
-              <span>Precisa de ajuda?</span>
-              <span className="text-blue-600">Falar com o suporte</span>
+              <span>Deseja gerenciar seus canais?</span>
+              <span className="text-blue-600 font-semibold cursor-pointer" onClick={() => setStep('install')}>Ver QR Code</span>
             </div>
           </section>
         </div>

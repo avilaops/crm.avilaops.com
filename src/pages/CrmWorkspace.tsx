@@ -62,7 +62,12 @@ function CrmWorkspace({ initialPage, onPageChange }: CrmWorkspaceProps) {
           onConnected={() => undefined}
         />
       )}
-      {knowledgeModal && <KnowledgeModal onClose={() => setKnowledgeModal(false)} />}
+      {knowledgeModal && (
+        <KnowledgeModal
+          onClose={() => setKnowledgeModal(false)}
+          onCreated={() => setKnowledgeModal(false)}
+        />
+      )}
     </main>
   )
 }
