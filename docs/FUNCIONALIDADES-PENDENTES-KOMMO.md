@@ -1,25 +1,44 @@
 # Agenda CRM - Funcionalidades pendentes para paridade com a Kommo
 
-Atualizado em: 11 de agosto de 2026
-Base auditada: commit `dd7c981`
+Atualizado em: 4 de setembro de 2026
+Base auditada: commit `7016eef` (01/09/2026), conferido contra o **banco de produção** `agenda_crm` em 178.105.82.48
+Auditoria anterior: commit `dd7c981`, 11 de agosto de 2026
 Escopo: frontend, backend, banco de dados, integrações, operação e segurança.
 
 ## 1. Objetivo
 
-Este documento trokansforma a comparação com a Kommo em um backlog executável para o Agenda CRM.
+Este documento transforma a comparação com a Kommo em um backlog executável para o Agenda CRM.
 
 Paridade funcional não significa copiar identidade visual, textos ou código da Kommo. Significa oferecer jornadas equivalentes, do início ao fim, com dados reais, persistência, permissões, auditoria, tratamento de falhas e experiência adequada para equipes comerciais.
 
-Uma tela só deve ser considerada entregue quando:
+### 1.1 A regra que vale acima de todas as outras
 
-- consome dados reais do backend;
-- permite concluir a ação principal;
-- aplica isolamento por empresa e permissões;
-- registra alterações importantes em auditoria;
-- possui estados de carregamento, vazio, sucesso e erro;
-- funciona em desktop e mobile;
-- possui testes proporcionais ao risco;
-- está validada no ambiente publicado.
+> **Uma funcionalidade só é considerada entregue quando permite ao usuário concluir a ação principal ponta a ponta em produção, com persistência e tratamento dos eventos necessários.**
+
+Ter endpoint não é ter jornada. Ter tela não é ter operação. Ter código no repositório não é ter cliente atendido.
+
+Esta regra existe por um motivo documentado. A auditoria de 11/08/2026 listou "envio outbound de texto pela API oficial do WhatsApp" e "atualização dos estados `sent`, `delivered`, `read` e `failed`" na seção **"o que já existe e não deve ser refeito"**. Em 04/09/2026 a verificação contra a Meta e contra o banco de produção mostrou que:
+
+- o app Meta do CRM (`1670392484704840`) tem **zero webhooks assinados**: `/subscriptions` devolve `{"data":[]}`;
+- o `META_TOKEN` do `.env.production` está **morto** (`code 190`, *the user logged out*);
+- a tabela `messages` tem **0 linhas** desde sempre;
+- o único registro em `channels` é um QR Code parado em `connecting` desde a criação.
+
+Ou seja: o roadmap deu como pronto o núcleo do produto, e ninguém percebeu por quase um mês. Foi preciso alguém abrir o banco na mão para descobrir. É esse buraco que a regra acima fecha.
+
+### 1.2 Os cinco critérios
+
+Toda funcionalidade crítica é avaliada em cinco eixos. Só recebe ✅ quando os cinco necessários estão fechados.
+
+| Critério | O que prova | Exemplo (Inbox) |
+| --- | --- | --- |
+| **UI** | A tela existe e mostra o estado real | a conversa aparece na lista |
+| **API** | O backend executa a ação | envia e recebe mensagem |
+| **Persistência** | O resultado sobrevive ao reload | a mensagem fica salva |
+| **Integração** | O mundo externo responde | webhook e status da Meta chegando |
+| **Produção** | Alguém real completou a jornada | fluxo ponta a ponta comprovado com dado de produção |
+
+Quando um eixo não se aplica, marcar `n/a` explicitamente. Não deixar em branco: branco vira "esqueci" e "esqueci" vira ✅ por descuido.
 
 ## 2. Legenda
 
@@ -29,65 +48,110 @@ Uma tela só deve ser considerada entregue quando:
 | `P1` | Paridade comercial essencial |
 | `P2` | Automação, escala e gestão avançada |
 | `P3` | Ecossistema, enterprise e diferenciação |
-| `Parcial` | Há interface, schema ou endpoint, mas a jornada não está completa |
-| `Ausente` | Não existe implementação funcional no produto atual |
 
-## 3. O que já existe e não deve ser refeito
+| Estado | Significado |
+| --- | --- |
+| ✅ `Presente` | Os cinco critérios fechados; cliente conclui a jornada |
+| ⚠️ `Parcial` | Parte da jornada existe, mas ela não fecha do início ao fim |
+| 🧪 `Implementado, não comprovado em produção` | Código existe e talvez funcione; **nada em produção prova** |
+| ❌ `Ausente` | Não existe implementação funcional |
 
-O Agenda já possui uma fundação válida:
+O estado 🧪 foi criado em 04/09/2026 e é o mais importante dos quatro. Ele existe porque "tem código" e "funciona para cliente" são coisas completamente diferentes, e o formato antigo (só Presente/Parcial/Ausente) empurrava tudo que tinha código para "Presente". Nada sobe de 🧪 para ✅ sem evidência de produção: linha no banco, resposta da API externa, ou registro de uso por alguém que não seja quem escreveu o código.
 
-- autenticação por email e senha com sessão persistida no PostgreSQL;
-- cookie de sessão `HttpOnly`, `SameSite=Lax` e `Secure` em produção;
-- usuários com papéis básicos `admin`, `gerente` e `atendente`;
-- ativação e desativação de usuários;
-- estrutura de tenant nas tabelas principais;
-- criptografia AES-256-GCM para `app_secret` e `access_token` da Meta;
-- OAuth da Meta e sincronização inicial de WABAs/números;
-- validação `X-Hub-Signature-256` no webhook da Meta;
-- idempotência básica de mensagens pelo identificador externo e chave de envio;
-- recebimento de mensagens do WhatsApp no PostgreSQL;
-- envio outbound de texto pela API oficial do WhatsApp;
-- atualização dos estados `sent`, `delivered`, `read` e `failed` recebidos da Meta;
-- inbox com busca e filtros processados no servidor;
-- atribuição, arquivamento, espera, SLA fixo e criação de lead pela conversa;
-- listagens reais de contatos e leads;
-- leitura real do pipeline e suas etapas;
-- registro inicial de eventos e `request_id`;
-- Docker, PostgreSQL, healthcheck, scripts de backup/restore e manual operacional.
+## 3. Arquitetura definitiva de comunicação
 
-Esses recursos ainda precisam de evolução nos pontos indicados abaixo, mas não partem do zero.
+**O CRM opera. A Messageria entrega.**
+
+O `crm.avilaops.com` não deve manter infraestrutura própria de Meta/WhatsApp. Quem fala com a Meta é o `sms.avilaops.com` (Messageria), que já tem canal multi-tenant, token de usuário de sistema cifrado no banco, webhook validado por `X-Hub-Signature-256`, controle da janela de 24h e modelos sincronizados.
+
+Isto vale como decisão, não como preferência. Os motivos:
+
+1. **Já foi provado do lado da Messageria.** Em 03/09/2026 o número comercial `+55 17 99105-3597` recebeu mensagem de um desconhecido, roteada por `phone_number_id`, gravada com a carga completa. Ninguém preparou esse teste.
+2. **Duplicar quebra.** Os dois apps Meta estão inscritos no mesmo WABA. Apontar os dois para a mesma URL de webhook entregaria cada evento duas vezes.
+3. **Número é um só.** A Meta bloqueia o número, não a mensagem. Ter dois caminhos para o mesmo número dobra o risco sem dobrar a capacidade.
+
+Consequência prática para este backlog: **tudo que a seção 6.9 pede de infraestrutura Meta sai do escopo do CRM** e vira integração com a Messageria. O CRM consome uma API interna; não guarda token da Meta, não recebe webhook da Meta, não sincroniza modelo.
+
+O que fica no CRM: a jornada comercial. Conversa vinculada a contato, lead e tarefa; timeline; atribuição; SLA. O que vai para a Messageria: entrega, status, janela, modelo, catálogo, número.
 
 ## 4. Diagnóstico executivo
 
-| Área | Situação atual | Principal lacuna |
-| --- | --- | --- |
-| Autenticação | Parcial | Recuperação, convites, 2FA, sessões e multi-tenant real |
-| Usuários | Parcial | Grupos, permissões granulares, convite e offboarding |
-| WhatsApp | Parcial | Mídia, templates, janela de 24h, campanhas e resiliência |
-| Inbox | Parcial | Tempo real, não lidos, contexto completo e colaboração |
-| Contatos | Parcial | CRUD, ficha, timeline, campos, tags, importação e deduplicação |
-| Leads | Parcial | CRUD completo, ficha, vínculo, histórico e ações em massa |
-| Pipeline | Parcial | Drag and drop, configuração, múltiplos funis e ganho/perda |
-| Canais Meta | Parcial | Onboarding completo, permissões, saúde e renovação de token |
-| Calendário e tarefas | Apenas visual/schema | Sem CRUD, agenda real, lembretes ou sincronização |
-| Email | Apenas visual | Sem conexão, sincronização, envio ou vínculo ao CRM |
-| Chat de equipe | Apenas visual | Sem mensagens, grupos, menções ou arquivos |
-| Empresas | Apenas visual | Entidade e relacionamentos ainda não implementados |
-| Segmentos | Apenas estado vazio | Sem motor de condições ou campanhas |
-| Automações | Apenas estado vazio | Sem gatilhos, ações, executor ou histórico |
-| Analytics | Ausente | Sem métricas comerciais, de equipe, canal, SLA ou ROI |
-| Formulários e chat web | Ausente | Sem construtor, publicação ou captura de leads |
-| Produtos e mídia | Apenas estado vazio | Sem catálogo, armazenamento ou vínculo a negócios |
-| IA e Copilot | Apenas visual | Sem RAG, agentes, sugestões ou execução segura |
-| Integrações | Catálogo visual | Botões não instalam nem sincronizam serviços |
-| Faturamento | Mock visual | Sem planos, cobrança, limites ou entitlement |
-| Perfil e workspace | Mock visual | Dados fixos e botão salvar sem persistência |
+Verificado em 04/09/2026 contra o banco de produção. A coluna "evidência" traz a contagem real de linhas.
 
-## 5. Backlog funcional completo
+| Área | Estado | Evidência em produção | Principal lacuna |
+| --- | --- | --- | --- |
+| Contatos (base) | ✅ | `contacts` = 4.435 | ficha, timeline, campos, dedup |
+| Caixa de e-mail IMAP | ✅ | `mail_senders` = 17, `integrations` provider `mail` | threading, envio pela ficha, vínculo ao lead |
+| Agente de IA | ✅ | `ai_runs` = 12 sem erro (triagem 10, catálogo 1, campanha 1), `ai_suggestions` = 10 | RAG, agentes, mais trabalhos |
+| Autenticação | ⚠️ | `sessions` = 6, `users` = 1 | recuperação, convites, 2FA, multi-tenant real |
+| Newsletter | ⚠️ | `newsletter_campaigns` = 1 em `draft`, `newsletter_deliveries` = 0 | **nenhum envio saiu**; falta disparo real |
+| Pipeline | ⚠️ | `pipelines` = 1, `pipeline_stages` = 4, `leads` = 0 | drag and drop, CRUD, ganho/perda |
+| Auditoria | ⚠️ | `events` = 6, último em 29/08 | tela, antes/depois, retenção |
+| **WhatsApp / Inbox** | 🧪 | `messages` = 0, `conversations` = 0, `channels` = 1 em `connecting`, webhook não assinado, token morto | **nunca operou**; migrar para a Messageria |
+| Tarefas | 🧪 | `tasks` = 0 | schema do commit `51dac13`, jornada não exercida |
+| Empresas | 🧪 | `companies` = 0 | schema existe, CRUD não |
+| Automações | 🧪 | `automation_rules` = 0, `automation_runs` = 0 | schema existe, motor não |
+| Chat de equipe | 🧪 | `team_channels` = 3, `team_messages` = 0 | canais criados, nenhuma mensagem |
+| Segmentos | ❌ | `segments` = 0 | motor de condições |
+| Produtos e mídia | ❌ | `products` = 0, `media_files` = 0 | catálogo e object storage |
+| IA: fontes de conhecimento | ❌ | `knowledge_sources` = 0 | RAG (distinto do agente, que funciona) |
+| Analytics | ❌ | — | métricas comerciais, SLA, ROI |
+| Formulários e chat web | ❌ | — | construtor e captura |
+| Integrações (central) | ❌ | credencial em `localStorage`, "conectado" falso | catálogo real com backend |
+| Faturamento | ❌ | mock visual | planos, cobrança, entitlement |
+| Perfil e workspace | ❌ | `tenant_settings` = 0 | dados fixos, salvar não persiste |
 
-### 5.1 Multi-tenant e ciclo de vida da empresa
+### 4.1 O que mudou desde a auditoria de agosto
 
-Status: `Parcial`
+Quatorze commits entraram entre `dd7c981` e `7016eef`. O que muda o backlog:
+
+- **Caixa IMAP e newsletter** (`341c8d7` e anteriores): a seção 6.11 dizia `Ausente` para e-mail. Está errado: a conta `nicolas@avilaops.com` autentica, 17 remetentes catalogados, tela de configuração com senha cifrada em `integrations`. Ver `docs/` do módulo e a nota de produto sobre newsletter no CRM.
+- **Agente de IA** (`15eebce` e o módulo de IA): a seção 6.21 dizia `Ausente`. Está errado: OpenAI `gpt-4.1-mini`, chave cifrada em `integrations`, três trabalhos rodando (triagem, catalogação, redação), 12 execuções sem erro, saída em JSON com esquema, e a pessoa aplica ou descarta. O que continua ausente é o **RAG** (`knowledge_sources` = 0), que é outra coisa.
+- **Postgres 18** (`6b16fee`, `c71413a`): o banco de produção subiu de versão, em container próprio (`agenda-crm-db`), com usuário `agenda_crm`. A seção 6.26 fala em migrações versionadas; o commit `88291f0` já consertou o deploy que não migrava e o restore que não restaurava.
+- **Deploy sem CI** (`7fd4964`, `6684a95`): o deploy deixou de depender do GitHub Actions, que está bloqueado por billing na conta `avilaops`. Scripts operacionais sincronizados com o host.
+- **Marca própria** (`7fd4964`, `0d2c6e3`): a identidade da Kommo saiu; tela de entrada no padrão da casa.
+- **Tarefas, empresas e QR de WhatsApp** (`51dac13`): entrou **schema e tela**, não jornada. `tasks` = 0, `companies` = 0, e o canal QR está em `connecting` desde que foi criado. Por isso 🧪, não ✅.
+
+### 4.2 O que a auditoria anterior deu como pronto e não estava
+
+A seção 3 da versão de agosto ("O que já existe e não deve ser refeito") listava seis itens de WhatsApp que a verificação de 04/09/2026 desmente. Ficam registrados aqui para não voltarem a ser tratados como base pronta:
+
+| Afirmação de 11/08 | Verificado em 04/09 |
+| --- | --- |
+| "OAuth da Meta e sincronização inicial de WABAs/números" | nenhum canal Meta em `channels`; só o QR em `connecting` |
+| "validação `X-Hub-Signature-256` no webhook da Meta" | código existe; **webhook não assinado no app**, então nunca foi exercido |
+| "recebimento de mensagens do WhatsApp no PostgreSQL" | `messages` = 0, `inbound_events` = 0 |
+| "envio outbound de texto pela API oficial do WhatsApp" | `messages` = 0; token do CRM morto |
+| "atualização dos estados `sent`, `delivered`, `read` e `failed`" | nenhuma mensagem para atualizar |
+| "inbox com busca e filtros processados no servidor" | a consulta existe; a caixa está vazia desde sempre |
+| "idempotência básica de mensagens" | nunca exercida |
+
+Nada disso significa que o código é ruim. Significa que ele **nunca rodou com dado real**, e que tratá-lo como fundação pronta foi o erro que este documento passa a evitar.
+
+## 5. O que de fato está pronto e não deve ser refeito
+
+Com os cinco critérios aplicados, e só com evidência de produção:
+
+- autenticação por email e senha com sessão persistida no PostgreSQL (`sessions` = 6);
+- cookie de sessão `HttpOnly`, `SameSite=Lax` e `Secure` em produção;
+- usuários com papéis básicos `admin`, `gerente` e `atendente`, com ativação e desativação;
+- estrutura de tenant nas tabelas principais (ainda não é multi-tenant real: `tenants` = 1);
+- criptografia AES-256-GCM de segredo de integração em `integrations`;
+- base de contatos real e consultável pelo servidor (`contacts` = 4.435, três origens etiquetadas);
+- caixa de e-mail IMAP/SMTP configurada pela tela, com senha cifrada e teste de conexão;
+- catalogação de remetente da caixa em contato (`mail_senders` = 17);
+- agente de IA com três trabalhos, saída em JSON com esquema e revisão humana (`ai_runs` = 12);
+- registro inicial de eventos e `request_id` (`events` = 6);
+- Docker, PostgreSQL 18, healthcheck, scripts de backup/restore e manual operacional;
+- deploy que não depende do CI bloqueado.
+
+Esses recursos ainda precisam de evolução nos pontos indicados abaixo, mas não partem do zero.
+
+## 6. Backlog funcional completo
+
+### 6.1 Multi-tenant e ciclo de vida da empresa
+
+Estado: ⚠️ `Parcial`
 Prioridade: `P0`
 
 - [ ] Criar cadastro de nova empresa/workspace.
@@ -106,9 +170,9 @@ Prioridade: `P0`
 
 Critério de aceite: duas empresas devem usar o mesmo ambiente sem visualizar, alterar ou receber eventos uma da outra, inclusive quando utilizarem contas Meta diferentes.
 
-### 5.2 Conta, autenticação e segurança do usuário
+### 6.2 Conta, autenticação e segurança do usuário
 
-Status: `Parcial`
+Estado: ⚠️ `Parcial`
 Prioridade: `P0/P1`
 
 - [ ] Editar nome, telefone, idioma, fuso horário, avatar e preferências do perfil.
@@ -129,9 +193,9 @@ Prioridade: `P0/P1`
 - [ ] Adicionar whitelist de IP para clientes enterprise.
 - [ ] Exibir histórico de segurança e mudanças sensíveis.
 
-### 5.3 Usuários, equipes e permissões
+### 6.3 Usuários, equipes e permissões
 
-Status: `Parcial`
+Estado: ⚠️ `Parcial`
 Prioridade: `P0/P1`
 
 - [ ] Criar grupos/equipes, como Vendas, Suporte e Financeiro.
@@ -149,9 +213,9 @@ Prioridade: `P0/P1`
 - [ ] Exibir consumo de assentos e impacto no plano.
 - [ ] Testar autorização em todos os endpoints, não apenas esconder botões no frontend.
 
-### 5.4 Contatos, empresas e base de clientes
+### 6.4 Contatos, empresas e base de clientes
 
-Status: `Parcial`
+Estado: ⚠️ `Parcial`
 Prioridade: `P0/P1`
 
 - [ ] CRUD completo de contatos.
@@ -176,9 +240,9 @@ Prioridade: `P0/P1`
 - [ ] Implementar busca e fusão assistida de contatos, empresas e leads duplicados.
 - [ ] Preservar histórico e referências ao fundir registros.
 
-### 5.5 Importação, exportação e migração de dados
+### 6.5 Importação, exportação e migração de dados
 
-Status: `Parcial`
+Estado: ⚠️ `Parcial`
 Prioridade: `P1`
 
 - [ ] Reintroduzir importação VCF na versão web com relatório detalhado.
@@ -195,9 +259,9 @@ Prioridade: `P1`
 - [ ] Executar grandes importações/exportações em background.
 - [ ] Registrar autor, arquivo, contagens e falhas em auditoria.
 
-### 5.6 Leads e ficha de negociação
+### 6.6 Leads e ficha de negociação
 
-Status: `Parcial`
+Estado: ⚠️ `Parcial`
 Prioridade: `P0/P1`
 
 - [ ] Criar lead manualmente pela lista, pipeline, contato, empresa, email e formulário.
@@ -216,9 +280,9 @@ Prioridade: `P0/P1`
 - [ ] Adicionar links diretos e busca por identificador.
 - [ ] Registrar todas as alterações relevantes no histórico.
 
-### 5.7 Pipelines e funil de vendas
+### 6.7 Pipelines e funil de vendas
 
-Status: `Parcial`
+Estado: ⚠️ `Parcial`
 Prioridade: `P0/P1`
 
 - [ ] Permitir múltiplos pipelines por workspace.
@@ -237,9 +301,9 @@ Prioridade: `P0/P1`
 - [ ] Criar regras de acesso por pipeline e etapa.
 - [ ] Calcular previsão, velocidade e conversão por etapa.
 
-### 5.8 Inbox omnichannel
+### 6.8 Inbox omnichannel
 
-Status: `Parcial`
+Estado: ⚠️ `Parcial`
 Prioridade: `P0/P1`
 
 - [ ] Atualizar conversas em tempo real por WebSocket ou SSE.
@@ -272,36 +336,81 @@ Prioridade: `P0/P1`
 - [ ] Implementar bloqueio, spam e opt-out quando suportado pelo canal.
 - [ ] Criar notificações de nova mensagem, menção, transferência e SLA.
 
-### 5.9 WhatsApp Business Platform
+### 6.9 WhatsApp: integração com a Messageria
 
-Status: `Parcial`
-Prioridade: `P0/P1`
+Estado: 🧪 `Implementado, não comprovado em produção`
+Prioridade: `P0` (é a fundação do produto, e hoje ela não existe em operação)
 
-- [ ] Completar o onboarding oficial por Embedded Signup ou fluxo equivalente aprovado pela Meta.
-- [ ] Assinar os webhooks necessários para cada WABA/telefone conectado.
-- [ ] Registrar e verificar números quando o fluxo exigir PIN/código.
-- [ ] Exibir status de registro, nome verificado, qualidade e capacidade de envio.
-- [ ] Detectar token expirado, permissão removida e canal desconectado.
-- [ ] Renovar ou substituir credenciais com aviso antecipado.
-- [ ] Vincular cada número a equipes e regras de acesso.
-- [ ] Definir roteamento e horário por número.
-- [ ] Processar corretamente todos os tipos de mensagem inbound.
-- [ ] Armazenar mídia em object storage com autorização temporária.
-- [ ] Implementar templates: listar, criar, editar rascunho, enviar à Meta e acompanhar aprovação.
-- [ ] Suportar variáveis, cabeçalho, rodapé, botões e idiomas em templates.
-- [ ] Enviar mensagens de marketing, utilidade e autenticação conforme disponibilidade da Meta.
-- [ ] Suportar listas, carrosséis, catálogos e WhatsApp Flows.
-- [ ] Sincronizar catálogo da Meta e produtos.
-- [ ] Suportar coexistência com o aplicativo WhatsApp Business quando disponível.
-- [ ] Monitorar limites, qualidade, erros, cobrança e conversas por categoria.
-- [ ] Criar reconciliação periódica para mensagens/status perdidos.
-- [ ] Responder rapidamente ao webhook e processar payloads em fila persistente.
-- [ ] Implementar retries, dead-letter queue e reprocessamento idempotente.
-- [ ] Registrar payload bruto protegido, resultado e correlação sem vazar tokens ou dados desnecessários.
+| Critério | Situação |
+| --- | --- |
+| UI | ⚠️ inbox e conversa desenhadas, nunca com dado real |
+| API | 🧪 rotas de envio existem; nunca entregaram |
+| Persistência | ❌ `messages` = 0, `conversations` = 0, `inbound_events` = 0 |
+| Integração | ❌ webhook não assinado no app Meta; `META_TOKEN` morto |
+| Produção | ❌ nenhuma jornada concluída |
 
-### 5.10 Outros canais de comunicação
+Esta seção foi reescrita em 04/09/2026. A versão anterior pedia que o CRM construísse infraestrutura Meta própria: Embedded Signup, assinatura de webhook, registro de número, renovação de token, sincronização de modelos e catálogo. **Isso sai de escopo**, pela decisão da seção 3: o CRM opera, a Messageria entrega.
 
-Status: `Ausente`
+O que muda na prática: o trabalho deixa de ser "implementar a Cloud API" e passa a ser "consumir a Messageria e cuidar da jornada comercial". É menos código, e o que sobra é o que o CRM sabe fazer.
+
+#### 6.9.1 Sair da infraestrutura própria de Meta
+
+- [ ] Parar de tratar as rotas Meta do CRM como caminho de produção.
+- [ ] Remover o `META_TOKEN` morto do `.env.production` para ninguém tentar reusá-lo.
+- [ ] Desinscrever o app "Ávila Ops" (`1670392484704840`) do WABA `1055665857141232`, ou deixar explicitamente documentado que ele não recebe webhook.
+- [ ] Encerrar o canal `qrcode` parado em `connecting`: ele desenha um estado que nunca vai avançar.
+- [ ] Manter o código de webhook/OAuth desativado e marcado, não apagado, até a integração nova estar comprovada.
+
+#### 6.9.2 Consumir a Messageria
+
+- [ ] Definir a credencial do CRM na Messageria (chave de API por conta, não token da Meta).
+- [ ] Guardar essa credencial cifrada em `integrations`, no mesmo padrão de `mail` e `ai`.
+- [ ] Enviar mensagem pela API da Messageria (`canal: "whatsapp"`), sem falar com a Graph API.
+- [ ] Receber mensagem e status por webhook **da Messageria** para o CRM, com assinatura validada.
+- [ ] Gravar entrada e saída em `messages`, com `external_id` para idempotência.
+- [ ] Refletir os estados de entrega que a Messageria já apura.
+- [ ] Espelhar a janela de 24h que a Messageria controla; não recalcular.
+- [ ] Listar os modelos aprovados vindos da Messageria; não sincronizar com a Meta direto.
+- [ ] Exibir de qual número a mensagem saiu, separando produção de número de teste.
+- [ ] Tratar erro de canal (número não verificado, sem modelo, fora da janela) com mensagem que a pessoa entenda.
+
+#### 6.9.3 A jornada comercial, que é o que fica no CRM
+
+- [ ] Vincular conversa a contato, empresa e lead.
+- [ ] Criar contato ou lead a partir de uma conversa nova.
+- [ ] Exibir a timeline unificada da pessoa: WhatsApp, e-mail, tarefas e alterações.
+- [ ] Atribuir conversa a atendente e a equipe.
+- [ ] Medir SLA de primeira resposta e de espera.
+- [ ] Notificar conversa sem responsável e janela prestes a fechar.
+- [ ] Criar tarefa a partir de uma mensagem.
+- [ ] Registrar nota interna sem enviar ao cliente.
+
+#### Critério de aceite
+
+Uma conversa iniciada por um desconhecido no WhatsApp precisa: aparecer no inbox do CRM, virar contato com um clique, ser respondida de dentro do CRM, ter a resposta entregue pela Messageria com status confirmado, e deixar registro na timeline. Enquanto isso não acontecer com um número real e uma pessoa real, esta seção permanece 🧪.
+
+O caso concreto que serve de teste: em 03/09/2026 chegou "Por acaso vcs não vende cabo de ligar SSD sata no Pc aí não neh ?" de `+55 16 99234-8303`. A janela fechou em 04/09 sem resposta. Quando um caso como esse for atendido inteiro pelo CRM, a seção fecha.
+
+### 6.9-A Correção em curso na Messageria (04/09/2026)
+
+Estado: 🧪 `Implementado, não comprovado em produção`
+Prioridade: `P0`
+
+Duas telas construídas no `sms.avilaops.com` que fazem parte desta correção, não de outro projeto:
+
+1. **`painel/mensagens`**: coluna de número de origem, com selo separando produção de teste da Meta, filtro por origem, aviso quando toda a lista é de teste, e link de cada envio para a conversa.
+2. **`painel/conversas/[telefone]`**: histórico de entrada e saída na mesma linha do tempo, contador da janela de 24h que atualiza sozinho, caixa de resposta com texto livre enquanto a janela está aberta, seleção de modelo aprovado quando fechou, e registro de opt-out pela tela.
+
+Situação: tipos limpos, lint verde, 29 testes passando, build do Next completo com a rota nova. Falta empacotar e subir; o `docker build` falhou no BuildKit e o caminho normal depende do GitHub Actions bloqueado por billing.
+
+- [ ] Resolver o empacotamento (BuildKit ou build local + `docker load`).
+- [ ] Aplicar a migration `20260904000000_canal_de_teste`.
+- [ ] Conferir em produção que o número de teste aparece marcado.
+- [ ] Responder uma conversa real pela tela e confirmar entrega.
+
+### 6.10 Outros canais de comunicação
+
+Estado: ❌ `Ausente`
 Prioridade: `P1/P2`
 
 - [ ] Criar arquitetura de adaptadores para novos provedores.
@@ -318,9 +427,9 @@ Prioridade: `P1/P2`
 - [ ] Unificar histórico, identidade e permissões entre canais.
 - [ ] Exibir saúde, limites e erros de cada conexão.
 
-### 5.11 Email CRM
+### 6.11 Email CRM
 
-Status: `Ausente`
+Estado: ⚠️ `Parcial` — a caixa IMAP funciona em produção (17 remetentes catalogados, senha cifrada em `integrations`, teste de conexão pela tela). O que falta é o CRM em volta dela: thread, vínculo ao lead, envio pela ficha.
 Prioridade: `P1`
 
 - [ ] Conectar Gmail e Outlook por OAuth.
@@ -340,9 +449,9 @@ Prioridade: `P1`
 - [ ] Aplicar permissão de acesso a caixas compartilhadas.
 - [ ] Registrar todo email na timeline do CRM.
 
-### 5.12 Chat e colaboração da equipe
+### 6.12 Chat e colaboração da equipe
 
-Status: `Ausente`
+Estado: 🧪 `Implementado, não comprovado em produção` — `team_channels` = 3 e `team_messages` = 0: os canais existem e ninguém nunca escreveu neles.
 Prioridade: `P1`
 
 - [ ] Chat privado entre usuários.
@@ -358,9 +467,9 @@ Prioridade: `P1`
 - [ ] Notificações configuráveis.
 - [ ] Permissões e retenção de histórico.
 
-### 5.13 Tarefas, calendário e agendamentos
+### 6.13 Tarefas, calendário e agendamentos
 
-Status: `Parcial` no schema e `Ausente` na jornada
+Estado: 🧪 `Implementado, não comprovado em produção` — o commit `51dac13` trouxe schema e tela de tarefas; `tasks` = 0 em produção. Calendário e agendamento continuam ❌ `Ausente`.
 Prioridade: `P0/P1`
 
 - [ ] CRUD completo de tarefas.
@@ -383,9 +492,9 @@ Prioridade: `P0/P1`
 - [ ] Disparar notificações e automações de prazo.
 - [ ] Medir atrasos e produtividade por usuário/equipe.
 
-### 5.14 Automações e pipeline digital
+### 6.14 Automações e pipeline digital
 
-Status: `Ausente`
+Estado: 🧪 `Implementado, não comprovado em produção` — as tabelas `automation_rules`, `automation_runs` e `automation_settings` existem e estão todas em 0. Sem motor, sem execução.
 Prioridade: `P1/P2`
 
 - [ ] Modelar automação com gatilho, condições, ações e versão publicada.
@@ -404,9 +513,9 @@ Prioridade: `P1/P2`
 - [ ] Exibir log por execução, duração, resultado e motivo de falha.
 - [ ] Definir limites para evitar loops e abuso.
 
-### 5.15 Bots conversacionais
+### 6.15 Bots conversacionais
 
-Status: `Ausente`
+Estado: ❌ `Ausente`
 Prioridade: `P2`
 
 - [ ] Construtor visual no-code com passos e ramificações.
@@ -420,9 +529,9 @@ Prioridade: `P2`
 - [ ] Templates de bot e importação/exportação de fluxo.
 - [ ] Modo de teste, versionamento e analytics por etapa.
 
-### 5.16 Segmentos, campanhas e transmissões
+### 6.16 Segmentos, campanhas e transmissões
 
-Status: `Ausente`
+Estado: ❌ `Ausente`
 Prioridade: `P1/P2`
 
 - [ ] Criar segmentos dinâmicos por condições combináveis.
@@ -443,9 +552,9 @@ Prioridade: `P1/P2`
 - [ ] Registrar aprovação, autoria e auditoria da campanha.
 - [ ] Integrar segmentos a públicos de anúncios quando houver demanda.
 
-### 5.17 Formulários web e captura de leads
+### 6.17 Formulários web e captura de leads
 
-Status: `Ausente`
+Estado: ❌ `Ausente`
 Prioridade: `P1/P2`
 
 - [ ] Construtor de formulários com campos padrão e personalizados.
@@ -462,9 +571,9 @@ Prioridade: `P1/P2`
 - [ ] Exibir submissões, conversão, falhas e exportação.
 - [ ] Disponibilizar API/webhook de submissão.
 
-### 5.18 Botão de chat e live chat para sites
+### 6.18 Botão de chat e live chat para sites
 
-Status: `Ausente`
+Estado: ❌ `Ausente`
 Prioridade: `P2`
 
 - [ ] Criar widget multicanal com WhatsApp, Instagram, Messenger, Telegram e live chat.
@@ -478,9 +587,9 @@ Prioridade: `P2`
 - [ ] Reações: saudação, formulário, tarefa, webhook, tag, campo e roteamento.
 - [ ] Aplicar consentimento, privacidade e bloqueio anti-spam.
 
-### 5.19 Produtos, catálogos e mídia
+### 6.19 Produtos, catálogos e mídia
 
-Status: `Ausente`
+Estado: ❌ `Ausente`
 Prioridade: `P1/P2`
 
 - [ ] CRUD de produtos e serviços.
@@ -496,9 +605,9 @@ Prioridade: `P1/P2`
 - [ ] Usar object storage em vez de gravar binários no PostgreSQL.
 - [ ] Verificar tipo, tamanho, malware e acesso temporário aos arquivos.
 
-### 5.20 Analytics, metas e gestão
+### 6.20 Analytics, metas e gestão
 
-Status: `Ausente`
+Estado: ❌ `Ausente`
 Prioridade: `P1/P2`
 
 - [ ] Dashboard com widgets configuráveis por usuário e equipe.
@@ -521,9 +630,9 @@ Prioridade: `P1/P2`
 - [ ] Exportação e relatórios agendados por email.
 - [ ] Métricas quase em tempo real com definições documentadas.
 
-### 5.21 IA, Copilot e fontes de conhecimento
+### 6.21 IA, Copilot e fontes de conhecimento
 
-Status: `Ausente`; existe apenas a interface visual
+Estado: ⚠️ `Parcial` — o **agente de IA funciona em produção**: `gpt-4.1-mini`, chave cifrada em `integrations`, 12 execuções sem erro (triagem 10, catalogação 1, redação 1), saída em JSON com esquema, e a pessoa aplica ou descarta. O que continua ❌ `Ausente` é o **RAG**: `knowledge_sources` = 0, sem fontes, sem embeddings, sem busca semântica. São coisas diferentes e a auditoria anterior tratava as duas como uma só.
 Prioridade: `P2/P3`
 
 - [ ] Criar fontes por texto, URL, site, PDF, DOC e DOCX.
@@ -548,9 +657,9 @@ Prioridade: `P2/P3`
 - [ ] Fazer o Copilot consultar o CRM conforme a permissão do usuário.
 - [ ] Impedir que o Copilot execute alterações sem confirmação explícita.
 
-### 5.22 Central de integrações e plataforma para desenvolvedores
+### 6.22 Central de integrações e plataforma para desenvolvedores
 
-Status: `Ausente`; há somente catálogo visual
+Estado: ❌ `Ausente` — há somente catálogo visual, e o card da Twilio chega a mostrar "conectado" gravando em `localStorage`
 Prioridade: `P2/P3`
 
 - [ ] Criar catálogo real com busca, categorias, detalhes e estado instalado.
@@ -569,9 +678,9 @@ Prioridade: `P2/P3`
 - [ ] Adicionar sandbox/ambiente de teste e limites por plano.
 - [ ] Preparar marketplace de parceiros sem permitir código arbitrário no frontend.
 
-### 5.23 Faturamento, planos e monetização
+### 6.23 Faturamento, planos e monetização
 
-Status: `Ausente`; tela atual é mock
+Estado: ❌ `Ausente` — a tela atual é mock
 Prioridade: `P1`
 
 - [ ] Definir planos, preços, limites e diferenciais comerciais do Agenda.
@@ -591,9 +700,9 @@ Prioridade: `P1`
 - [ ] Restringir faturamento a administradores autorizados.
 - [ ] Registrar alterações de plano e pagamento em auditoria.
 
-### 5.24 Configurações do workspace, chat e notificações
+### 6.24 Configurações do workspace, chat e notificações
 
-Status: `Ausente`; telas genéricas e dados fixos
+Estado: ❌ `Ausente` — telas genéricas e dados fixos; `tenant_settings` = 0
 Prioridade: `P1`
 
 - [ ] Persistir nome, logo, idioma, fuso horário, moeda e formato regional.
@@ -611,9 +720,9 @@ Prioridade: `P1`
 - [ ] Notificar mensagens, menções, tarefas, erros, cobrança, leads e automações.
 - [ ] Salvar todas as configurações com validação, feedback e auditoria.
 
-### 5.25 Mobile, responsividade e acessibilidade
+### 6.25 Mobile, responsividade e acessibilidade
 
-Status: `Parcial`
+Estado: ⚠️ `Parcial`
 Prioridade: `P1/P2`
 
 - [ ] Tornar sidebar, configurações, inbox, tabelas, calendário e pipeline responsivos.
@@ -629,9 +738,9 @@ Prioridade: `P1/P2`
 - [ ] Testar Chrome, Edge, Safari, Firefox, Android e iOS.
 - [ ] Validar visualmente breakpoints reais com screenshots automatizadas.
 
-### 5.26 Auditoria, confiabilidade e operação
+### 6.26 Auditoria, confiabilidade e operação
 
-Status: `Parcial`
+Estado: ⚠️ `Parcial`
 Prioridade: `P0/P1`
 
 - [ ] Criar tela de auditoria com filtros por usuário, entidade, evento e período.
@@ -655,9 +764,9 @@ Prioridade: `P0/P1`
 - [ ] Definir RPO, RTO, SLO, incidentes, rollback e comunicação de indisponibilidade.
 - [ ] Criar ambiente de homologação separado de produção.
 
-### 5.27 Segurança, privacidade e conformidade
+### 6.27 Segurança, privacidade e conformidade
 
-Status: `Parcial`
+Estado: ⚠️ `Parcial`
 Prioridade: `P0/P1`
 
 - [ ] Implementar proteção CSRF para rotas mutáveis baseadas em cookie.
@@ -679,9 +788,9 @@ Prioridade: `P0/P1`
 - [ ] Definir subprocessadores, termos, política de privacidade e resposta a incidentes.
 - [ ] Executar revisão SAST, dependências, imagens Docker e teste de invasão antes de escala comercial.
 
-### 5.28 Onboarding, ajuda e acabamento de produto
+### 6.28 Onboarding, ajuda e acabamento de produto
 
-Status: `Parcial`
+Estado: ⚠️ `Parcial`
 Prioridade: `P1/P2`
 
 - [ ] Transformar a home em painel real de implantação e operação.
@@ -697,18 +806,27 @@ Prioridade: `P1/P2`
 - [ ] Padronizar branding Agenda CRM em título, favicon, emails e telas OAuth.
 - [ ] Medir adoção das jornadas sem coletar conteúdo sensível desnecessário.
 
-## 6. Sequência recomendada de implementação
+## 7. Sequência recomendada de implementação
+### Fase 0 - Fechar a comunicação (em curso, 04/09/2026)
+
+Objetivo: o CRM receber e responder uma conversa real. Sem isso, nada acima importa.
+
+1. Terminar o deploy das duas telas da Messageria (seção 6.9-A).
+2. Provar em produção que a origem aparece marcada e que dá para responder pela tela.
+3. Ligar o CRM à Messageria por credencial, não por token da Meta (seção 6.9.2).
+4. Atender ponta a ponta uma conversa iniciada por um desconhecido.
+5. Só então marcar a seção 6.9 como ✅.
 
 ### Fase 1 - CRM operacional confiável
 
 Objetivo: uma empresa real consegue atender e vender diariamente.
 
 1. Multi-tenant real e autorização por tenant.
-2. Fila persistente de webhooks e mensagens.
+2. Fila persistente de eventos vindos da Messageria.
 3. CRUD de contatos, empresas e leads com fichas/timeline.
 4. Pipeline editável e drag and drop.
 5. Inbox em tempo real, não lidos, mídia e contexto do CRM.
-6. Templates WhatsApp e controle da janela de 24 horas.
+6. Janela de 24 horas e modelos **espelhados da Messageria**, não reimplementados.
 7. Tarefas e lembretes vinculados ao atendimento.
 8. Permissões por equipe, pipeline e canal.
 9. Testes end-to-end e observabilidade das jornadas críticas.
@@ -752,7 +870,7 @@ Objetivo: atingir a camada avançada da Kommo e criar diferenciação própria.
 6. Analytics de IA, custos, qualidade e ROI.
 7. Recursos enterprise: SSO, whitelist de IP, auditoria avançada e alta disponibilidade.
 
-## 7. Critérios de paridade operacional
+## 8. Critérios de paridade operacional
 
 O Agenda pode ser considerado funcionalmente comparável no núcleo da Kommo quando uma empresa conseguir, sem intervenção manual no banco ou servidor:
 
@@ -769,7 +887,7 @@ O Agenda pode ser considerado funcionalmente comparável no núcleo da Kommo qua
 11. Auditar quem alterou dados e recuperar falhas operacionais.
 12. Gerenciar assinatura, limites, segurança e dados sem suporte técnico.
 
-## 8. Diferenciais recomendados para o Agenda
+## 9. Diferenciais recomendados para o Agenda
 
 Equiparar não deve tornar o Agenda apenas uma versão menor da Kommo. Os diferenciais mais coerentes com a estratégia atual são:
 
@@ -782,7 +900,7 @@ Equiparar não deve tornar o Agenda apenas uma versão menor da Kommo. Os difere
 - timeline realmente unificada entre atendimento, venda, tarefas, pagamentos e suporte;
 - preço e limites transparentes dentro do produto.
 
-## 9. Fontes oficiais usadas na comparação
+## 10. Fontes oficiais usadas na comparação
 
 - [Visão geral da interface e módulos da Kommo](https://support.kommo.com/docs/kommo-interface)
 - [Leads, contatos e empresas](https://support.kommo.com/docs/lead-profiles)
@@ -807,11 +925,33 @@ Equiparar não deve tornar o Agenda apenas uma versão menor da Kommo. Os difere
 - [Planos e faturamento](https://support.kommo.com/docs/upgrade-plan)
 - [Plataforma para desenvolvedores](https://developers.kommo.com/docs/kommo-for-developers)
 
-## 10. Evidências do Agenda consideradas na auditoria
+## 11. Evidências consideradas na auditoria
+
+### Código (commit `7016eef`)
 
 - [`backend/schema.sql`](../backend/schema.sql): entidades e limitações atuais do modelo.
 - [`backend/server.ts`](../backend/server.ts): autenticação, Meta, inbox, contatos, leads e pipeline.
 - [`src/pages/workspace/WorkspacePages.tsx`](../src/pages/workspace/WorkspacePages.tsx): módulos operacionais e estados ainda visuais.
 - [`src/pages/settings/SettingsPages.tsx`](../src/pages/settings/SettingsPages.tsx): usuários, canais e configurações ainda simuladas.
+- [`src/pages/settings/IntegrationCenterPage.tsx`](../src/pages/settings/IntegrationCenterPage.tsx): Central de Integrações; o card da Twilio grava em `localStorage` e mostra "conectado" para integração que não existe.
 - [`src/lib/crm.ts`](../src/lib/crm.ts): integrações efetivas entre frontend e backend.
 - [`docs/OPERACAO.md`](./OPERACAO.md): operação, deploy, backup e rollback atuais.
+- [`docs/ARQUITETURA.md`](./ARQUITETURA.md): mapa levantado do código e do banco de produção.
+
+### Banco de produção (`agenda_crm` em 178.105.82.48, 04/09/2026)
+
+A contagem de linhas por tabela é a evidência que separa 🧪 de ✅. Reproduzir com:
+
+```sh
+docker exec agenda-crm-db psql -U agenda_crm -d agenda_crm \
+  -c "select relname, n_live_tup from pg_stat_user_tables order by n_live_tup desc"
+```
+
+Resultado que fundamenta este documento: `contacts` 4.435 · `mail_senders` 17 · `ai_runs` 12 · `ai_suggestions` 10 · `events` 6 · `sessions` 6 · `pipeline_stages` 4 · `team_channels` 3 · `integrations` 2 · `channels` 1 · `newsletter_campaigns` 1 · `pipelines` 1 · `tenants` 1 · `users` 1. Em **zero**: `automation_rules`, `automation_runs`, `automation_settings`, `companies`, `conversations`, `external_references`, `inbound_events`, `knowledge_sources`, `leads`, `media_files`, `messages`, `newsletter_deliveries`, `newsletter_signups`, `products`, `segments`, `tasks`, `team_messages`, `tenant_settings`.
+
+### Meta (Graph API, 04/09/2026)
+
+- `GET /1670392484704840/subscriptions` → `{"data":[]}`: o app do CRM não recebe webhook.
+- `GET /debug_token` com o `META_TOKEN` do `.env.production` → `code 190`, *the user logged out*.
+- `GET /1055665857141232/subscribed_apps` → os apps "Ávila Ops" e "Messageria" no mesmo WABA.
+- `GET /1370137702838905` → `+55 17 99105-3597`, `CONNECTED`, `VERIFIED`, `CLOUD_API`.
