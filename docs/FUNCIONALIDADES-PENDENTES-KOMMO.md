@@ -391,22 +391,40 @@ Uma conversa iniciada por um desconhecido no WhatsApp precisa: aparecer no inbox
 
 O caso concreto que serve de teste: em 03/09/2026 chegou "Por acaso vcs não vende cabo de ligar SSD sata no Pc aí não neh ?" de `+55 16 99234-8303`. A janela fechou em 04/09 sem resposta. Quando um caso como esse for atendido inteiro pelo CRM, a seção fecha.
 
-### 6.9-A Correção em curso na Messageria (04/09/2026)
+### 6.9-A Origem e resposta na Messageria (04/09/2026)
 
-Estado: 🧪 `Implementado, não comprovado em produção`
+Estado: ⚠️ `Parcial` — no ar e comprovado; falta a última prova, que depende da Meta
 Prioridade: `P0`
 
-Duas telas construídas no `sms.avilaops.com` que fazem parte desta correção, não de outro projeto:
+| Critério | Situação |
+| --- | --- |
+| UI | ✅ as duas telas renderizam em produção |
+| API | ✅ `responderConversa` chama a mesma `enviarWhatsapp` da API pública |
+| Persistência | ✅ migration `20260904000000_canal_de_teste` aplicada; 1 canal marcado |
+| Integração | ✅ webhook da Meta já entrega inbound neste número desde 03/09 |
+| Produção | ⚠️ telas provadas com dado real; **resposta ainda não enviada** |
 
-1. **`painel/mensagens`**: coluna de número de origem, com selo separando produção de teste da Meta, filtro por origem, aviso quando toda a lista é de teste, e link de cada envio para a conversa.
-2. **`painel/conversas/[telefone]`**: histórico de entrada e saída na mesma linha do tempo, contador da janela de 24h que atualiza sozinho, caixa de resposta com texto livre enquanto a janela está aberta, seleção de modelo aprovado quando fechou, e registro de opt-out pela tela.
+Duas telas do `sms.avilaops.com` que fazem parte desta correção, não de outro projeto:
 
-Situação: tipos limpos, lint verde, 29 testes passando, build do Next completo com a rota nova. Falta empacotar e subir; o `docker build` falhou no BuildKit e o caminho normal depende do GitHub Actions bloqueado por billing.
+1. **`painel/mensagens`**: coluna **De** com o número de origem, selo separando produção de teste da Meta, filtro por origem (que também isola o SMS simulado), faixa de aviso quando a lista inteira é de teste, e link de cada envio de WhatsApp para a conversa.
+2. **`painel/conversas/[telefone]`**: entrada e saída na mesma linha do tempo, contador da janela de 24h que atualiza sozinho e troca de cor na última hora, texto livre enquanto a janela está aberta, seleção de modelo aprovado quando ela fecha, e registrar ou desfazer pedido de saída pela tela.
 
-- [ ] Resolver o empacotamento (BuildKit ou build local + `docker load`).
-- [ ] Aplicar a migration `20260904000000_canal_de_teste`.
-- [ ] Conferir em produção que o número de teste aparece marcado.
-- [ ] Responder uma conversa real pela tela e confirmar entrega.
+Nada reimplementa regra: responder chama a mesma `enviarWhatsapp` da API, então janela, opt-out, modelo aprovado, franquia e teto continuam valendo iguais.
+
+#### O que já está comprovado em produção
+
+Deploy em 04/09/2026, commit `88f2db6` na branch `painel/origem-e-resposta`. O Docker Desktop estava fora e o Actions segue bloqueado, então a imagem foi construída no servidor a partir do standalone (receita no README do projeto).
+
+- Migration aplicada: `ALTER TABLE` + `UPDATE 1`. O `+55 17 99105-3597` ficou `teste=f, padrao=t`; o `+1 555-147-4741` ficou `teste=t, padrao=f`. Exatamente um canal marcado, e o de teste nunca vira padrão de envio.
+- `painel/mensagens` responde com a coluna **De**, os três filtros de origem e os selos. Com `origem=producao` sobram só as duas linhas do número comercial, ambas `falhou` com o erro `131058`; com `origem=teste` aparece a faixa "Nenhuma destas saiu por um número de produção". É o oposto do que a tela mostrava antes, e é a verdade.
+- `painel/conversas/+5516992348303` traz a conversa que se perdeu: o texto "cabo de ligar SSD", o selo `atendido por +55 17 99105-3597`, o aviso `sem janela aberta`, a lista de modelo aprovado (só `hello_world`) e o botão de registrar pedido de saída.
+
+#### O que falta
+
+- [ ] Responder uma conversa dentro da janela de 24h e confirmar a entrega. Não dá para forçar: a janela abre quando **o cliente** escreve, e a última fechou em 04/09 00:52.
+- [ ] Aprovar um modelo em pt_BR (`aviso_de_entrega` e `teste_de_canal` seguem PENDENTE na Meta). Sem isso, conversa fria continua sem saída, e é este o gargalo real da venda, não o webhook.
+
+Enquanto a resposta não sair, a seção fica ⚠️: as telas estão provadas, a jornada completa não.
 
 ### 6.10 Outros canais de comunicação
 
@@ -811,11 +829,11 @@ Prioridade: `P1/P2`
 
 Objetivo: o CRM receber e responder uma conversa real. Sem isso, nada acima importa.
 
-1. Terminar o deploy das duas telas da Messageria (seção 6.9-A).
-2. Provar em produção que a origem aparece marcada e que dá para responder pela tela.
-3. Ligar o CRM à Messageria por credencial, não por token da Meta (seção 6.9.2).
-4. Atender ponta a ponta uma conversa iniciada por um desconhecido.
-5. Só então marcar a seção 6.9 como ✅.
+1. ~~Terminar o deploy das duas telas da Messageria (seção 6.9-A).~~ Feito em 04/09/2026.
+2. ~~Provar em produção que a origem aparece marcada e que dá para responder pela tela.~~ Feito: filtros e conversa conferidos com dado real.
+3. Aprovar um modelo em pt_BR na Meta, para conversa fria ter saída.
+4. Ligar o CRM à Messageria por credencial, não por token da Meta (seção 6.9.2).
+5. Atender ponta a ponta uma conversa iniciada por um desconhecido, e só então marcar a seção 6.9 como ✅.
 
 ### Fase 1 - CRM operacional confiável
 
