@@ -20,7 +20,7 @@
 # Uso: bash scripts/subir-sem-ci.sh
 set -euo pipefail
 
-SERVIDOR="${SERVIDOR:-applications}"
+SERVIDOR="${SERVIDOR:-apps-noclient}"  # 204.168.249.111 desde 10/09/2026 (antes: applications)
 IMAGEM="current-app"
 PASTA="/opt/agenda-crm"
 HOJE="$(date +%Y%m%d)"
