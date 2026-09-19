@@ -15,6 +15,36 @@ Software privado.
 - Agenda de contatos como item auxiliar do CRM.
 - Base visual para integração WhatsApp OAuth2 e multi-tenant.
 
+## Inbox em tempo real
+
+O inbox recebe mensagem, tique de entrega e transcricao de audio sem recarregar
+a pagina, por um fluxo SSE em `GET /api/realtime`. A distribuicao entre
+instancias usa `LISTEN/NOTIFY` do proprio Postgres — nao ha broker novo no
+desenho e subir uma segunda replica nao exige reescrita.
+
+O nginx precisa entregar esse endpoint sem buffer (`nginx/nginx.conf` ja traz a
+regra); o backend tambem manda `X-Accel-Buffering: no` para proxies que nao
+estejam sob esse arquivo.
+
+### Anexos
+
+Midia recebida e baixada da Graph API em segundo plano e guardada em
+`MEDIA_DIR`, que precisa ficar num volume persistente (`/app/storage/media` no
+compose). O arquivo e servido por `GET /api/media/:id/content`, com sessao —
+a URL assinada da Meta nunca chega ao navegador. O limite de tamanho fica em
+`MEDIA_MAX_BYTES` (16 MB por padrao).
+
+### Janela de 24 horas e templates
+
+A API oficial so aceita texto livre nas 24 horas seguintes a ultima mensagem do
+cliente. A listagem de conversas ja devolve `window_open` e `window_expires_at`,
+o envio de texto fora da janela responde `409` com `code: "window_closed"` e a
+tela troca sozinha para o seletor de templates aprovados.
+
+Os templates vem da WABA por `POST /api/whatsapp/templates/sync` e ficam no
+banco: consultar a Graph a cada abertura do inbox gastaria o rate limit da
+conta num dado que quase nao muda.
+
 ## Desenvolvimento web
 
 ```powershell

@@ -60,6 +60,22 @@ O estado 🧪 foi criado em 04/09/2026 e é o mais importante dos quatro. Ele ex
 
 ## 3. Arquitetura definitiva de comunicação
 
+- inbox em tempo real por SSE com distribuicao via `LISTEN/NOTIFY` do Postgres;
+- contador de nao lidos por conversa e total do workspace;
+- midia do WhatsApp nos dois sentidos, guardada em volume e servida com sessao;
+- templates aprovados sincronizados da WABA e envio com variaveis;
+- janela de atendimento de 24 horas imposta no backend e exibida no inbox.
+
+Esses recursos ainda precisam de evolução nos pontos indicados abaixo, mas não partem do zero.
+
+> **Nota de rota.** Os três últimos itens acima — mídia, modelos e janela de 24h —
+> falam com a Meta a partir do CRM, porque foram construídos sobre o webhook e o
+> token que já viviam aqui. A decisão registrada logo abaixo move essa camada
+> para a Messageria. Quando a API interna existir, eles passam a consumi-la:
+> `whatsapp-media.ts` e `whatsapp-templates.ts` isolam as chamadas à Graph
+> justamente para que essa troca seja local, e a janela continua sendo do CRM
+> como regra de tela mesmo quando o cálculo vier de fora.
+
 **O CRM opera. A Messageria entrega.**
 
 O `crm.avilaops.com` não deve manter infraestrutura própria de Meta/WhatsApp. Quem fala com a Meta é o `sms.avilaops.com` (Messageria), que já tem canal multi-tenant, token de usuário de sistema cifrado no banco, webhook validado por `X-Hub-Signature-256`, controle da janela de 24h e modelos sincronizados.
