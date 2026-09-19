@@ -1,5 +1,6 @@
 export type CrmConversation = {
   id: string
+  contact_id: string | null
   status: 'open' | 'waiting' | 'archived' | string
   assigned_user_id: string | null
   contact_name: string | null
@@ -81,6 +82,8 @@ export type CrmContact = {
   phone: string | null
   company: string | null
   source: string | null
+  tags?: string[]
+  newsletter_status?: string
   created_at: string
   updated_at: string
 }
@@ -142,7 +145,7 @@ export class ApiError extends Error {
   }
 }
 
-async function api<T>(path: string, init?: RequestInit): Promise<T> {
+export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, { ...init, credentials: 'include' })
   if (response.status === 401) {
     window.location.reload()
@@ -367,6 +370,84 @@ export function deleteCompany(companyId: string) {
   return api<{ ok: boolean }>(`/api/companies/${companyId}`, { method: 'DELETE' })
 }
 
+export function createContact(input: {
+  name: string
+  email?: string | null
+  phone?: string | null
+  company?: string | null
+  company_id?: string | null
+  source?: string | null
+  tags?: string[]
+}) {
+  return api<{ contact: CrmContact }>('/api/contacts', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  })
+}
+
+export function updateContact(contactId: string, input: Partial<{
+  name: string
+  email: string | null
+  phone: string | null
+  company: string | null
+  company_id: string | null
+  source: string | null
+  tags: string[]
+}>) {
+  return api<{ contact: CrmContact }>(`/api/contacts/${contactId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  })
+}
+
+export function deleteContact(contactId: string) {
+  return api<{ ok: boolean }>(`/api/contacts/${contactId}`, { method: 'DELETE' })
+}
+
+export function getContactTimeline(contactId: string) {
+  return api<{
+    contact: CrmContact
+    events: { id: string; entity_type: string; event_type: string; payload: Record<string, unknown>; created_at: string }[]
+    tasks: { id: string; title: string; description: string | null; priority: string; due_at: string | null; status: string; created_at: string }[]
+    messages: { id: string; direction: string; body: string; sent_at: string; status: string }[]
+  }>(`/api/contacts/${contactId}/timeline`)
+}
+
+export function createLead(input: {
+  title: string
+  value_cents?: number
+  stage_id?: string | null
+  contact_id?: string | null
+  company_id?: string | null
+}) {
+  return api<{ lead: CrmLead }>('/api/leads', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  })
+}
+
+export function updateLead(leadId: string, input: Partial<{
+  title: string
+  value_cents: number
+  status: 'open' | 'won' | 'lost' | 'archived'
+  stage_id: string | null
+  contact_id: string | null
+  company_id: string | null
+}>) {
+  return api<{ lead: CrmLead }>(`/api/leads/${leadId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  })
+}
+
+export function deleteLead(leadId: string) {
+  return api<{ ok: boolean }>(`/api/leads/${leadId}`, { method: 'DELETE' })
+}
+
 export function updateLeadStage(leadId: string, stageId: string) {
   return api<{ lead: CrmLead }>(`/api/leads/${leadId}/stage`, {
     method: 'PATCH',
@@ -382,3 +463,309 @@ export function getQrCodeInstance() {
 export function getQrCodeStatus(instanceName: string) {
   return api<{ status: string; display_name?: string; phone_number?: string }>(`/api/channels/qrcode/status/${instanceName}`)
 }
+
+export interface AuditLogEntry {
+  id: string
+  entity_type: string
+  event_type: string
+  payload: Record<string, unknown>
+  request_id?: string
+  user_name?: string
+  user_email?: string
+  created_at: string
+}
+
+export function listAuditLogs(filters?: { entityType?: string; search?: string; page?: number; pageSize?: number }) {
+  const params = new URLSearchParams()
+  if (filters?.entityType) params.set('entityType', filters.entityType)
+  if (filters?.search) params.set('search', filters.search)
+  if (filters?.page) params.set('page', String(filters.page))
+  if (filters?.pageSize) params.set('pageSize', String(filters.pageSize))
+
+  const queryStr = params.toString()
+  return api<{ logs: AuditLogEntry[]; pagination: { page: number; pageSize: number; total: number } }>(
+    `/api/audit-logs${queryStr ? `?${queryStr}` : ''}`
+  )
+}
+
+// ── Produtos e Serviços ───────────────────────────────────────────────────────
+export type CrmProduct = {
+  id: string
+  name: string
+  sku: string | null
+  category: string
+  price_cents: number
+  description: string | null
+  active: boolean
+  created_at: string
+  updated_at: string
+}
+
+export function listProducts(filters?: { search?: string; category?: string; active?: string; page?: number; pageSize?: number }) {
+  return api<{ products: CrmProduct[]; categories: { name: string; total: number }[]; pagination: { page: number; pageSize: number; total: number; totalPages: number } }>(
+    `/api/products${toQuery(filters)}`
+  )
+}
+
+export function createProduct(input: { name: string; sku?: string; category?: string; price_cents?: number; description?: string; active?: boolean }) {
+  return api<{ product: CrmProduct }>('/api/products', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  })
+}
+
+export function updateProduct(productId: string, input: Partial<CrmProduct>) {
+  return api<{ product: CrmProduct }>(`/api/products/${productId}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  })
+}
+
+export function deleteProduct(productId: string) {
+  return api<{ success: boolean }>(`/api/products/${productId}`, { method: 'DELETE' })
+}
+
+// ── Automações Comerciais & n8n ──────────────────────────────────────────────
+export type CrmAutomation = {
+  id: string
+  name: string
+  trigger_type: string
+  conditions: Record<string, unknown>
+  action_type: string
+  action_payload: Record<string, unknown>
+  active: boolean
+  runs_count: number
+  last_run_at: string | null
+  created_at: string
+}
+
+export function listAutomations() {
+  return api<{ automations: CrmAutomation[] }>('/api/automations')
+}
+
+export function createAutomation(input: {
+  name: string
+  trigger_type: string
+  conditions?: Record<string, unknown>
+  action_type: string
+  action_payload?: Record<string, unknown>
+  active?: boolean
+}) {
+  return api<{ automation: CrmAutomation }>('/api/automations', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  })
+}
+
+export function updateAutomation(id: string, input: Partial<CrmAutomation>) {
+  return api<{ automation: CrmAutomation }>(`/api/automations/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  })
+}
+
+export function toggleAutomation(id: string) {
+  return api<{ automation: CrmAutomation }>(`/api/automations/${id}/toggle`, { method: 'POST' })
+}
+
+export function testAutomation(id: string) {
+  return api<{ result: { success: boolean; detail: string; response?: unknown } }>(`/api/automations/${id}/test`, { method: 'POST' })
+}
+
+export function deleteAutomation(id: string) {
+  return api<{ success: boolean }>(`/api/automations/${id}`, { method: 'DELETE' })
+}
+
+// ── Segmentos & Filtros ──────────────────────────────────────────────────────
+export type CrmSegment = {
+  id: string
+  name: string
+  description: string | null
+  rules: {
+    tags?: string[]
+    source?: string
+    newsletter_status?: string
+    has_phone?: boolean
+    has_email?: boolean
+    search?: string
+  }
+  created_at: string
+}
+
+export function listSegments() {
+  return api<{ segments: CrmSegment[] }>('/api/segments')
+}
+
+export function createSegment(input: { name: string; description?: string; rules?: Record<string, unknown> }) {
+  return api<{ segment: CrmSegment }>('/api/segments', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  })
+}
+
+export function getSegmentContacts(segmentId: string) {
+  return api<{ segment: CrmSegment; contacts: CrmContact[]; totalCount: number }>(`/api/segments/${segmentId}/contacts`)
+}
+
+export function deleteSegment(segmentId: string) {
+  return api<{ success: boolean }>(`/api/segments/${segmentId}`, { method: 'DELETE' })
+}
+
+// ── Central de Mídia & Documentos ─────────────────────────────────────────────
+export type CrmMediaFile = {
+  id: string
+  name: string
+  file_type: string
+  file_size_bytes: number | string
+  url: string
+  category: string
+  created_at: string
+}
+
+export function listMediaFiles(filters?: { search?: string; category?: string; file_type?: string }) {
+  return api<{ files: CrmMediaFile[]; categories: { name: string; total: number }[]; total: number }>(
+    `/api/media${toQuery(filters)}`
+  )
+}
+
+export function createMediaFile(input: {
+  name: string
+  file_type: string
+  file_size_bytes?: number
+  url: string
+  category?: string
+}) {
+  return api<{ file: CrmMediaFile }>('/api/media', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  })
+}
+
+export function deleteMediaFile(id: string) {
+  return api<{ success: boolean }>(`/api/media/${id}`, { method: 'DELETE' })
+}
+
+// ── Chat Interno da Equipe ───────────────────────────────────────────────────
+export type CrmTeamChannel = {
+  id: string
+  name: string
+  description: string | null
+  is_default: boolean
+  created_at: string
+}
+
+export type CrmTeamMessage = {
+  id: string
+  channel_id: string
+  user_id: string | null
+  user_name: string
+  body: string
+  created_at: string
+}
+
+export function listTeamChannels() {
+  return api<{ channels: CrmTeamChannel[] }>('/api/team/channels')
+}
+
+export function createTeamChannel(input: { name: string; description?: string }) {
+  return api<{ channel: CrmTeamChannel }>('/api/team/channels', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  })
+}
+
+export function listTeamMessages(channelId: string) {
+  return api<{ channel: CrmTeamChannel; messages: CrmTeamMessage[] }>(`/api/team/channels/${channelId}/messages`)
+}
+
+export function sendTeamMessage(channelId: string, body: string) {
+  return api<{ message: CrmTeamMessage }>(`/api/team/channels/${channelId}/messages`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ body }),
+  })
+}
+
+// ── Configurações de Workspace, Chat e IA ────────────────────────────────────
+export type TenantSettings = {
+  tenant_id: string
+  workspace_name: string
+  cnpj: string | null
+  phone: string | null
+  email: string | null
+  address: string | null
+  timezone: string
+  currency: string
+  business_hours: {
+    enabled: boolean
+    start: string
+    end: string
+    days: number[]
+  }
+  welcome_message: string | null
+  away_message: string | null
+  auto_assign: boolean
+  sla_minutes: number
+  ai_copilot_enabled: boolean
+  ai_autonomous_reply: boolean
+  ai_tone: string
+  ai_custom_instructions: string | null
+  updated_at: string
+}
+
+export type KnowledgeSource = {
+  id: string
+  tenant_id: string
+  title: string
+  type: 'faq' | 'document' | 'url' | 'guideline'
+  content: string
+  active: boolean
+  times_used: number
+  created_at: string
+  updated_at: string
+}
+
+export function getTenantSettings() {
+  return api<{ settings: TenantSettings }>('/api/settings')
+}
+
+export function updateTenantSettings(input: Partial<TenantSettings>) {
+  return api<{ settings: TenantSettings }>('/api/settings', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  })
+}
+
+export function listKnowledgeSources() {
+  return api<{ sources: KnowledgeSource[] }>('/api/knowledge')
+}
+
+export function createKnowledgeSource(input: { title: string; type: string; content: string }) {
+  return api<{ source: KnowledgeSource }>('/api/knowledge', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  })
+}
+
+export function updateKnowledgeSource(id: string, input: Partial<{ title: string; type: string; content: string; active: boolean }>) {
+  return api<{ source: KnowledgeSource }>(`/api/knowledge/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  })
+}
+
+export function deleteKnowledgeSource(id: string) {
+  return api<{ ok: boolean }>(`/api/knowledge/${id}`, { method: 'DELETE' })
+}
+
+

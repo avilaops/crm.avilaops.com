@@ -29,6 +29,20 @@ export function getSession() {
   return fetchJson<SessionResponse>('/api/auth/session')
 }
 
+type SsoStatus = {
+  enabled: boolean
+  url: string
+}
+
+/**
+ * Se o SSO esta ligado neste ambiente. Enquanto o `auth.avilaops.com` nao tiver
+ * credenciais configuradas o backend responde `enabled: false` e a tela mostra
+ * so o formulario de senha.
+ */
+export function getSsoStatus() {
+  return fetchJson<SsoStatus>('/api/auth/sso/enabled')
+}
+
 export function login(email: string, password: string) {
   return fetchJson<SessionResponse>('/api/auth/login', {
     method: 'POST',

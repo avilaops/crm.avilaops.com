@@ -2289,8 +2289,8 @@ async function main() {
     const filters = z.object({
       entityType: z.string().optional(),
       search: z.string().optional(),
-      page: z.coerce.number().default(1),
-      pageSize: z.coerce.number().default(50),
+      page: z.coerce.number().int().min(1).default(1),
+      pageSize: z.coerce.number().int().min(1).max(100).default(50),
     }).parse(request.query);
 
     const offset = (filters.page - 1) * filters.pageSize;
@@ -2308,10 +2308,10 @@ async function main() {
     }
 
     const result = await query(
-      `select e.id, e.entity_type, e.event_type, e.payload, e.created_at, e.request_id, e.message_id,
+      `select e.id, e.entity_type, e.event_type, e.payload, e.created_at, e.request_id,
               u.name as user_name, u.email as user_email
        from events e
-       left join users u on u.id = e.created_by
+       left join users u on u.id = e.actor_user_id
        where ${where.join(" and ")}
        order by e.created_at desc
        limit ${filters.pageSize} offset ${offset}`,
@@ -2321,7 +2321,7 @@ async function main() {
     const count = await query<{ total: string }>(
       `select count(*)::text as total
        from events e
-       left join users u on u.id = e.created_by
+       left join users u on u.id = e.actor_user_id
        where ${where.join(" and ")}`,
       params,
     );

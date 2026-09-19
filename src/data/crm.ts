@@ -5,6 +5,7 @@ import {
   Home,
   KanbanSquare,
   MessageCircle,
+  ShieldCheck,
   Sparkles,
   UsersRound,
 } from 'lucide-react'
@@ -39,6 +40,7 @@ export const navGroups: NavGroup[] = [
         children: [
           { id: 'chat-inbox', label: 'Inbox de chat' },
           { id: 'mail-inbox', label: 'Inbox de email' },
+          { id: 'newsletter', label: 'Newsletter' },
           { id: 'team-chat', label: 'Chats da equipe' },
         ],
       },
@@ -67,6 +69,7 @@ export const navGroups: NavGroup[] = [
       },
       { id: 'ai-agent', label: 'Agente de IA', icon: Sparkles },
       { id: 'automations', label: 'Automações', icon: Bot },
+      { id: 'audit-logs', label: 'Auditoria & Logs', icon: ShieldCheck },
     ],
   },
 ]
@@ -78,6 +81,7 @@ export const settingsItems = [
   ['Área de trabalho', 'mail-settings', 'Configurações de email'],
   ['Área de trabalho', 'billing', 'Faturamento'],
   ['Área de trabalho', 'users', 'Gestão de usuários'],
+  ['Área de trabalho', 'audit-logs', 'Auditoria e Logs de Segurança'],
   ['Funil de vendas', 'lead-sources', 'Fontes de lead'],
   ['IA', 'ai-settings', 'Configurações de IA'],
   ['IA', 'knowledge', 'Fontes de conhecimento'],
@@ -97,7 +101,7 @@ export const integrations = [
   'Webhooks',
   'Zapier',
   'Make',
-  'Stripe',
+  'Mercado Pago',
   'PayPal',
   'Asaas',
   'Google Agenda',

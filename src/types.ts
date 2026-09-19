@@ -1,9 +1,10 @@
-export type Screen = 'accounts' | 'app'
+export type Screen = 'login' | 'app'
 
 export type Page =
   | 'home'
   | 'chat-inbox'
   | 'mail-inbox'
+  | 'newsletter'
   | 'team-chat'
   | 'pipeline'
   | 'leads'
@@ -27,3 +28,4 @@ export type Page =
   | 'integrations'
   | 'lead-sources'
   | 'channels'
+  | 'audit-logs'

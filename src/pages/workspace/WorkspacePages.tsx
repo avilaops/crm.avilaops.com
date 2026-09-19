@@ -1,6 +1,20 @@
 import { useEffect, useRef, useState } from 'react'
-import { Archive, CheckCircle2, Clock, FileText, MessageCircle, MoreHorizontal, Paperclip, Plus, RefreshCw, Search, Trash2, X } from 'lucide-react'
+import Topbar from '../../components/layout/Topbar'
+import AiAgentPage from './AiAgentPage'
+import MailInbox from './MailInbox'
+import NewsletterPage from './newsletter/NewsletterPage'
+import ProductsPage from './ProductsPage'
+import AutomationsPage from './AutomationsPage'
+import SegmentsPage from './SegmentsPage'
+import MediaPage from './MediaPage'
+import TeamChatPage from './TeamChatPage'
+import AllContactsPage from './AllContactsPage'
+import CreateLeadModal from '../../components/modals/CreateLeadModal'
+import ContactDetailDrawer from '../../components/drawers/ContactDetailDrawer'
+import LeadDetailDrawer from '../../components/drawers/LeadDetailDrawer'
+import { Archive, CalendarDays, CheckCircle2, Clock, FileText, Paperclip, Plus, RefreshCw, Search, Trash2, X } from 'lucide-react'
 import type { LeadSource } from '../../components/modals/LeadSourceModal'
+import { createGoogleCalendarUrl } from '../../lib/googleCalendar'
 import {
   ApiError,
   archiveConversation,
@@ -12,6 +26,7 @@ import {
   deleteCompany,
   deleteTask,
   getPipeline,
+  listAuditLogs,
   listChannels,
   listCompanies,
   listContacts,
@@ -28,6 +43,7 @@ import {
   syncWhatsAppTemplates,
   updateLeadStage,
   updateTask,
+  type AuditLogEntry,
   type ConversationFilters,
   type CrmChannel,
   type CrmCompany,
@@ -46,41 +62,22 @@ import type { Page } from '../../types'
 function Workspace({ page, setPage, openLeadSource }: { page: Page; setPage: (page: Page) => void; openLeadSource: (source: LeadSource) => void }) {
   if (page === 'home') return <HomePage setPage={setPage} openLeadSource={openLeadSource} />
   if (page === 'chat-inbox') return <ChatInbox openLeadSource={openLeadSource} />
-  if (page === 'mail-inbox') return <SimpleTable title="Caixa de entrada" tab="Inbox de email" columns={['De', 'Mensagem e conexão de lead', 'Data']} empty="Desculpe, não há mensagens." action="Escrever" />
-  if (page === 'team-chat') return <TeamChat />
+  if (page === 'mail-inbox') return <MailInbox />
+  if (page === 'newsletter') return <NewsletterPage />
+  if (page === 'team-chat') return <TeamChatPage />
   if (page === 'pipeline') return <Pipeline />
   if (page === 'leads') return <LeadsList />
   if (page === 'calendar') return <TasksPage />
   if (page === 'contacts') return <ContactsList />
   if (page === 'companies') return <CompaniesList />
-  if (page === 'all-contacts') return <SimpleTable title="Todos os contatos e empresas" tab="Lista completa" columns={['Nome', 'Tipo', 'Telefone', 'E-mail']} empty="Nenhum registro encontrado." action="+ Adicionar" />
-  if (page === 'media') return <EmptyFeature title="Mídia" body="Arquivos, imagens e documentos usados nas conversas ficarão aqui." />
-  if (page === 'products') return <EmptyFeature title="Produtos" body="Cadastre produtos e use catálogos em mensagens e automações." />
-  if (page === 'segments') return <EmptyFeature title="Segmentos" body="Crie públicos por tags, comportamento, origem e etapa do funil." />
-  if (page === 'ai-agent') return <EmptyFeature title="Agente de IA" body="Configure recepcionistas, sugestões e preenchimento automático de perfis." />
-  if (page === 'automations') return <EmptyFeature title="Automações" body="Crie gatilhos ao mover etapas, receber mensagens ou vencer tarefas." />
+  if (page === 'audit-logs') return <AuditLogsList />
+  if (page === 'all-contacts') return <AllContactsPage />
+  if (page === 'media') return <MediaPage />
+  if (page === 'products') return <ProductsPage />
+  if (page === 'segments') return <SegmentsPage />
+  if (page === 'ai-agent') return <AiAgentPage />
+  if (page === 'automations') return <AutomationsPage />
   return <HomePage setPage={setPage} openLeadSource={openLeadSource} />
-}
-
-export function Topbar({ title, tab, action, onAction }: { title: string; tab?: string; action?: string; onAction?: () => void }) {
-  return (
-    <header className="flex h-16 items-center gap-4 border-b border-slate-200 bg-white px-5">
-      <h2 className="min-w-32 text-base font-bold uppercase tracking-wide">{title}</h2>
-      <div className="relative flex-1">
-        <Search className="absolute left-3 top-2.5 text-slate-400" size={16} />
-        <input className="w-full rounded border-0 py-2 pl-9 text-sm outline-none" placeholder="Pesquisar e filtrar" />
-      </div>
-      {tab && <span className="rounded bg-lime-100 px-2 py-1 text-sm text-lime-700">{tab}</span>}
-      <button className="rounded border border-slate-200 px-3 py-2 text-sm font-semibold">
-        <MoreHorizontal size={16} />
-      </button>
-      {action && (
-        <button className="rounded bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 transition" onClick={onAction}>
-          {action}
-        </button>
-      )}
-    </header>
-  )
 }
 
 function HomePage({ setPage, openLeadSource }: { setPage: (page: Page) => void; openLeadSource: (source: LeadSource) => void }) {
@@ -167,6 +164,7 @@ function ChatInbox({ openLeadSource }: { openLeadSource: (source: LeadSource) =>
   selectedIdRef.current = selectedId
   const conversationsRef = useRef<CrmConversation[]>([])
   const refreshTimer = useRef<number | null>(null)
+  const [selectedContactId, setSelectedContactId] = useState<string | null>(null)
 
   const refresh = (nextFilters = filters) => {
     setLoading(true)
@@ -563,8 +561,18 @@ function ChatInbox({ openLeadSource }: { openLeadSource: (source: LeadSource) =>
           ) : (
             <div className="flex h-full flex-col">
               <div className="flex h-16 items-center justify-between border-b border-slate-200 bg-white px-5">
-                <div>
-                  <h3 className="font-semibold">{selected.contact_name ?? selected.contact_phone ?? 'Contato'}</h3>
+                <div
+                  className={selected.contact_id ? 'cursor-pointer group' : ''}
+                  onClick={() => selected.contact_id && setSelectedContactId(selected.contact_id)}
+                >
+                  <h3 className="font-semibold text-slate-900 group-hover:text-blue-600 transition flex items-center gap-1.5">
+                    {selected.contact_name ?? selected.contact_phone ?? 'Contato'}
+                    {selected.contact_id && (
+                      <span className="rounded border border-blue-200 bg-blue-50 px-1.5 py-0.5 text-[10px] font-semibold text-blue-600">
+                        Ver Ficha
+                      </span>
+                    )}
+                  </h3>
                   <p className="text-xs text-slate-500">{selected.channel_name ?? 'WhatsApp'} · {selected.status}</p>
                 </div>
                 <div className="flex items-center gap-2">
@@ -646,6 +654,14 @@ function ChatInbox({ openLeadSource }: { openLeadSource: (source: LeadSource) =>
           )}
         </section>
       </div>
+
+      {selectedContactId && (
+        <ContactDetailDrawer
+          contactId={selectedContactId}
+          onClose={() => setSelectedContactId(null)}
+          onUpdated={() => refresh()}
+        />
+      )}
     </div>
   )
 }
@@ -858,47 +874,32 @@ function formatCurrency(valueCents: number) {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(valueCents / 100)
 }
 
-function TeamChat() {
-  return (
-    <div>
-      <Topbar title="Chats da equipe" />
-      <div className="grid min-h-[calc(100vh-4rem)] grid-cols-[360px_minmax(0,1fr)]">
-        <aside className="border-r border-slate-200 bg-white p-4">
-          <span className="rounded bg-lime-100 px-2 py-1 text-xs text-lime-700">Todos</span>
-          {['Chat com suporte', 'Relatório agendado', 'Convidar membros da equipe'].map((item, index) => (
-            <div key={item} className="mt-4 flex items-center gap-4 border-b border-slate-100 pb-4">
-              <div className="grid h-10 w-10 place-items-center rounded-full bg-slate-100">{index === 2 ? <Plus /> : <MessageCircle />}</div>
-              <div>
-                <p className="font-semibold">{item}</p>
-                {index === 2 && <p className="text-sm text-slate-500">Colaborar & vender juntos</p>}
-              </div>
-            </div>
-          ))}
-        </aside>
-        <section className="grid place-items-center bg-slate-50 text-center">
-          <div>
-            <h3 className="text-lg font-medium">Converse com sua equipe dentro da Agenda</h3>
-            <p className="mt-2 max-w-md text-sm text-slate-500">Envie mensagens a colegas, compartilhe arquivos e mantenha-se alinhado em todas as decisões.</p>
-            <button className="mt-6 rounded bg-blue-600 px-4 py-2 text-sm font-semibold text-white">Convidar membros da equipe</button>
-          </div>
-        </section>
-      </div>
-    </div>
-  )
-}
 
 function Pipeline() {
   const [stages, setStages] = useState<PipelineStage[]>([])
   const [leads, setLeads] = useState<CrmLead[]>([])
+  const [contacts, setContacts] = useState<CrmContact[]>([])
+  const [companies, setCompanies] = useState<CrmCompany[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
+  const [selectedLead, setSelectedLead] = useState<CrmLead | null>(null)
+  const [selectedContactId, setSelectedContactId] = useState<string | null>(null)
+  const [showCreateModal, setShowCreateModal] = useState(false)
+  const [createDefaultStageId, setCreateDefaultStageId] = useState<string | undefined>(undefined)
+
   const loadPipeline = () => {
     setLoading(true)
-    getPipeline()
-      .then((data) => {
-        setStages(data.stages)
-        setLeads(data.leads)
+    Promise.all([
+      getPipeline(),
+      listContacts({ page: 1, pageSize: 100 }),
+      listCompanies({ page: 1, pageSize: 100 }),
+    ])
+      .then(([pipelineData, contactsData, companiesData]) => {
+        setStages(pipelineData.stages)
+        setLeads(pipelineData.leads)
+        setContacts(contactsData.contacts)
+        setCompanies(companiesData.companies)
         setError('')
       })
       .catch((err: Error) => setError(err.message))
@@ -913,58 +914,186 @@ function Pipeline() {
     try {
       await updateLeadStage(leadId, newStageId)
       setLeads((prev) => prev.map((l) => (l.id === leadId ? { ...l, stage_id: newStageId } : l)))
-    } catch (err: any) {
-      alert(err.message || 'Falha ao mover lead.')
+      if (selectedLead?.id === leadId) {
+        setSelectedLead((prev) => (prev ? { ...prev, stage_id: newStageId } : null))
+      }
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : 'Falha ao mover lead.')
     }
   }
 
+  const totalValueCents = leads.reduce((acc, l) => acc + (l.value_cents || 0), 0)
+
   return (
     <div>
-      <Topbar title="Leads" tab="Funil de Vendas" />
+      <Topbar
+        title="Funil de Vendas & Oportunidades"
+        tab={`${formatCurrency(totalValueCents)} · ${leads.length} oportunidade(s)`}
+        action="+ Nova Oportunidade"
+        onAction={() => {
+          setCreateDefaultStageId(stages[0]?.id)
+          setShowCreateModal(true)
+        }}
+      />
+
       <div className="overflow-auto p-5">
-        {error && <p className="mb-4 rounded border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>}
-        <div className="grid min-w-[980px] gap-4 rounded bg-white p-4" style={{ gridTemplateColumns: `repeat(${Math.max(stages.length, 1)}, minmax(220px, 1fr))` }}>
+        {error && (
+          <p className="mb-4 rounded border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            {error}
+          </p>
+        )}
+
+        <div
+          className="grid min-w-[980px] gap-4 rounded bg-white p-4"
+          style={{ gridTemplateColumns: `repeat(${Math.max(stages.length, 1)}, minmax(240px, 1fr))` }}
+        >
           {loading && <p className="p-4 text-sm text-slate-400">Carregando funil...</p>}
-          {!loading && stages.map((stage) => (
-            <div key={stage.id} className="min-h-[520px] rounded border border-slate-100 bg-slate-50/50 p-2">
-              <div className="border-b-4 pb-2 text-center text-xs font-bold uppercase tracking-[0.14em]" style={{ borderColor: stage.color }}>
-                {stage.name} ({leads.filter((l) => l.stage_id === stage.id).length})
-              </div>
-              <div className="mt-3 space-y-3">
-                {leads.filter((lead) => lead.stage_id === stage.id).map((lead) => (
-                  <LeadCard key={lead.id} lead={lead} stages={stages} onStageChange={handleStageChange} />
-                ))}
-              </div>
-              {leads.filter((lead) => lead.stage_id === stage.id).length === 0 && (
-                <p className="p-4 text-center text-xs text-slate-400">Sem leads nesta etapa.</p>
-              )}
-            </div>
-          ))}
+          {!loading &&
+            stages.map((stage) => {
+              const stageLeads = leads.filter((l) => l.stage_id === stage.id)
+              const stageValue = stageLeads.reduce((acc, l) => acc + (l.value_cents || 0), 0)
+              return (
+                <div key={stage.id} className="min-h-[560px] rounded-xl border border-slate-200 bg-slate-50/60 p-3 flex flex-col justify-between">
+                  <div>
+                    <div
+                      className="border-b-2 pb-2.5 flex items-center justify-between"
+                      style={{ borderColor: stage.color }}
+                    >
+                      <div>
+                        <h4 className="text-xs font-bold uppercase tracking-wider text-slate-900">
+                          {stage.name}
+                        </h4>
+                        <p className="text-[10px] font-semibold text-slate-400">
+                          {formatCurrency(stageValue)}
+                        </p>
+                      </div>
+                      <span className="rounded-full bg-slate-200/80 px-2 py-0.5 text-[11px] font-bold text-slate-700">
+                        {stageLeads.length}
+                      </span>
+                    </div>
+
+                    <div className="mt-3 space-y-3">
+                      {stageLeads.map((lead) => (
+                        <LeadCard
+                          key={lead.id}
+                          lead={lead}
+                          stages={stages}
+                          onStageChange={handleStageChange}
+                          onClick={() => setSelectedLead(lead)}
+                        />
+                      ))}
+                    </div>
+
+                    {stageLeads.length === 0 && (
+                      <p className="p-6 text-center text-xs text-slate-400">Sem leads nesta etapa.</p>
+                    )}
+                  </div>
+
+                  <button
+                    className="mt-3 w-full rounded-lg border border-dashed border-slate-300 py-2 text-center text-xs font-semibold text-slate-500 hover:border-slate-400 hover:text-slate-800 transition"
+                    onClick={() => {
+                      setCreateDefaultStageId(stage.id)
+                      setShowCreateModal(true)
+                    }}
+                  >
+                    + Adicionar nesta etapa
+                  </button>
+                </div>
+              )
+            })}
         </div>
       </div>
+
+      {/* Modal de Criação de Lead */}
+      {showCreateModal && (
+        <CreateLeadModal
+          stages={stages}
+          defaultStageId={createDefaultStageId}
+          contacts={contacts}
+          companies={companies}
+          onClose={() => setShowCreateModal(false)}
+          onCreated={(newLead) => {
+            setLeads((prev) => [newLead, ...prev])
+          }}
+        />
+      )}
+
+      {/* Ficha Lateral do Lead */}
+      {selectedLead && (
+        <LeadDetailDrawer
+          lead={selectedLead}
+          stages={stages}
+          onClose={() => setSelectedLead(null)}
+          onUpdated={(updated) => {
+            setLeads((prev) => prev.map((l) => (l.id === updated.id ? updated : l)))
+            setSelectedLead(updated)
+          }}
+          onDeleted={(deletedId) => {
+            setLeads((prev) => prev.filter((l) => l.id !== deletedId))
+            setSelectedLead(null)
+          }}
+          onOpenContact={(cId) => {
+            setSelectedContactId(cId)
+          }}
+        />
+      )}
+
+      {/* Ficha Lateral do Contato */}
+      {selectedContactId && (
+        <ContactDetailDrawer
+          contactId={selectedContactId}
+          onClose={() => setSelectedContactId(null)}
+          onUpdated={(updated) => {
+            setContacts((prev) => prev.map((c) => (c.id === updated.id ? updated : c)))
+          }}
+          onDeleted={(deletedId) => {
+            setContacts((prev) => prev.filter((c) => c.id !== deletedId))
+            setSelectedContactId(null)
+          }}
+        />
+      )}
     </div>
   )
 }
 
-function LeadCard({ lead, stages, onStageChange }: { lead: CrmLead; stages: PipelineStage[]; onStageChange: (leadId: string, stageId: string) => void }) {
+function LeadCard({
+  lead,
+  stages,
+  onStageChange,
+  onClick,
+}: {
+  lead: CrmLead
+  stages: PipelineStage[]
+  onStageChange: (leadId: string, stageId: string) => void
+  onClick: () => void
+}) {
   const name = lead.contact_name ?? lead.title
   return (
-    <div className="rounded border border-slate-200 bg-white p-3 shadow-sm hover:shadow-md transition">
+    <div
+      onClick={onClick}
+      className="cursor-pointer rounded-xl border border-slate-200 bg-white p-3.5 shadow-sm hover:border-blue-400 hover:shadow-md transition"
+    >
       <div className="flex gap-3 items-start">
-        <div className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-blue-100 text-blue-700 text-xs font-bold">{name[0]?.toUpperCase() ?? 'L'}</div>
+        <div className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-blue-100 text-blue-700 text-xs font-bold">
+          {name[0]?.toUpperCase() ?? 'L'}
+        </div>
         <div className="min-w-0 flex-1">
-          <p className="truncate text-xs font-semibold text-slate-900">{name}</p>
+          <p className="truncate text-xs font-bold text-slate-900">{name}</p>
           <p className="truncate text-xs font-medium text-blue-600">{lead.title}</p>
-          <p className="mt-1 text-xs font-semibold text-slate-700">{formatCurrency(lead.value_cents)}</p>
-          <div className="mt-2 flex items-center justify-between gap-1">
+          <p className="mt-1 text-xs font-extrabold text-slate-800">{formatCurrency(lead.value_cents)}</p>
+
+          <div
+            className="mt-2.5 flex items-center justify-between gap-1"
+            onClick={(e) => e.stopPropagation()}
+          >
             <select
-              className="w-full rounded border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] text-slate-700 outline-none"
+              className="w-full rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-semibold text-slate-700 outline-none hover:bg-slate-100"
               value={lead.stage_id ?? ''}
               onChange={(e) => onStageChange(lead.id, e.target.value)}
             >
               {stages.map((s) => (
                 <option key={s.id} value={s.id}>
-                  Mover para: {s.name}
+                  Mover: {s.name}
                 </option>
               ))}
             </select>
@@ -1123,20 +1252,14 @@ function TasksPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [showModal, setShowModal] = useState(false)
-  const [form, setForm] = useState({ title: '', description: '', dueAt: '', priority: 'medium' as 'low' | 'medium' | 'high' })
   const [saving, setSaving] = useState(false)
 
-  const loadTasks = () => {
-    setLoading(true)
-    listTasks({ status: tabFilter, search })
-      .then((data) => {
-        setTasks(data.tasks)
-        setTotal(data.pagination.total)
-        setError('')
-      })
-      .catch((err: Error) => setError(err.message))
-      .finally(() => setLoading(false))
-  }
+  const [form, setForm] = useState({
+    title: '',
+    description: '',
+    dueAt: '',
+    priority: 'medium' as 'low' | 'medium' | 'high',
+  })
 
   useEffect(() => {
     const timeout = window.setTimeout(() => {
@@ -1163,13 +1286,14 @@ function TasksPage() {
     }
   }
 
-  const handleDeleteTask = async (id: string) => {
-    if (!confirm('Excluir esta tarefa?')) return
+  const handleDeleteTask = async (taskId: string) => {
+    if (!confirm('Deseja realmente remover esta tarefa?')) return
     try {
-      await deleteTask(id)
-      loadTasks()
+      await deleteTask(taskId)
+      setTasks((prev) => prev.filter((t) => t.id !== taskId))
+      setTotal((prev) => Math.max(0, prev - 1))
     } catch (err: any) {
-      alert(err.message || 'Falha ao deletar tarefa.')
+      alert(err.message || 'Falha ao remover tarefa.')
     }
   }
 
@@ -1178,15 +1302,16 @@ function TasksPage() {
     if (!form.title.trim()) return
     setSaving(true)
     try {
-      await createTask({
+      const created = await createTask({
         title: form.title,
         description: form.description || undefined,
-        dueAt: form.dueAt ? new Date(form.dueAt).toISOString() : undefined,
+        dueAt: form.dueAt || undefined,
         priority: form.priority,
       })
+      setTasks((prev) => [created.task, ...prev])
+      setTotal((prev) => prev + 1)
       setShowModal(false)
       setForm({ title: '', description: '', dueAt: '', priority: 'medium' })
-      loadTasks()
     } catch (err: any) {
       alert(err.message || 'Falha ao criar tarefa.')
     } finally {
@@ -1197,27 +1322,38 @@ function TasksPage() {
   return (
     <div>
       <Topbar title="Tarefas & Lembretes" tab={`${total} tarefa(s)`} action="+ Nova Tarefa" onAction={() => setShowModal(true)} />
-      <div className="space-y-4 p-5">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex gap-1 rounded bg-slate-100 p-1">
-            <button className={`rounded px-3 py-1.5 text-xs font-semibold ${tabFilter === 'open' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600'}`} onClick={() => setTabFilter('open')}>
-              Pendentes
-            </button>
-            <button className={`rounded px-3 py-1.5 text-xs font-semibold ${tabFilter === 'completed' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600'}`} onClick={() => setTabFilter('completed')}>
-              Concluídas
-            </button>
-            <button className={`rounded px-3 py-1.5 text-xs font-semibold ${tabFilter === 'all' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600'}`} onClick={() => setTabFilter('all')}>
-              Todas
-            </button>
+      <div className="p-6 space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3 bg-white p-4 rounded border border-slate-200 shadow-sm">
+          <div className="flex gap-2">
+            {(['open', 'completed', 'all'] as const).map((filter) => (
+              <button
+                key={filter}
+                className={`rounded px-4 py-2 text-xs font-semibold transition ${
+                  tabFilter === filter ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
+                onClick={() => setTabFilter(filter)}
+              >
+                {filter === 'open' ? 'Pendentes' : filter === 'completed' ? 'Concluídas' : 'Todas'}
+              </button>
+            ))}
           </div>
-          <input className="w-full max-w-xs rounded border border-slate-200 bg-white px-3 py-1.5 text-sm outline-none" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Filtrar tarefas..." />
+          <div className="flex items-center gap-2 flex-1 max-w-xs bg-slate-50 px-3 py-1.5 rounded border border-slate-200">
+            <Search size={16} className="text-slate-400" />
+            <input
+              type="text"
+              placeholder="Filtrar tarefas..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="w-full bg-transparent text-xs outline-none placeholder:text-slate-400"
+            />
+          </div>
         </div>
 
-        {error && <p className="rounded border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>}
+        {error && <div className="rounded border border-red-200 bg-red-50 p-4 text-sm text-red-600">{error}</div>}
 
-        <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
-          {loading && <div className="p-6 text-center text-sm text-slate-400">Carregando tarefas...</div>}
-          {!loading && tasks.length === 0 && <div className="p-6 text-center text-sm text-slate-400">Nenhuma tarefa encontrada.</div>}
+        <div className="overflow-hidden bg-white rounded border border-slate-200 shadow-sm">
+          {loading && <div className="p-8 text-center text-sm text-slate-500">Carregando tarefas...</div>}
+          {!loading && tasks.length === 0 && <div className="p-8 text-center text-sm text-slate-500">Nenhuma tarefa encontrada.</div>}
           {!loading &&
             tasks.map((task) => {
               const isCompleted = task.status === 'completed'
@@ -1243,8 +1379,17 @@ function TasksPage() {
                       </div>
                     </div>
                   </div>
-                  <div className="flex items-center gap-3 shrink-0">
+                  <div className="flex items-center gap-2 shrink-0">
                     <span className={`rounded px-2 py-0.5 text-xs font-semibold ${priorityColor}`}>{priorityLabel}</span>
+                    <a
+                      href={createGoogleCalendarUrl({ title: task.title, description: task.description ?? undefined, dueAt: task.due_at ?? undefined })}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="rounded border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11px] font-semibold text-emerald-700 hover:bg-emerald-100"
+                      title="Adicionar ao Google Agenda"
+                    >
+                      + Google Agenda
+                    </a>
                     <button className="text-slate-400 hover:text-red-600 p-1" onClick={() => handleDeleteTask(task.id)}>
                       <Trash2 size={16} />
                     </button>
@@ -1285,11 +1430,24 @@ function TasksPage() {
                   </select>
                 </div>
               </div>
-              <div className="mt-5 flex justify-end gap-2 pt-2">
-                <button type="button" className="rounded border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50" onClick={() => setShowModal(false)}>Cancelar</button>
-                <button type="submit" disabled={saving} className="rounded bg-blue-600 px-4 py-2 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-50">
-                  {saving ? 'Salvando...' : 'Criar Tarefa'}
+              <div className="flex items-center justify-between border-t border-slate-100 pt-3 mt-4">
+                <button
+                  type="button"
+                  disabled={!form.title.trim()}
+                  className="flex items-center gap-1 rounded border border-emerald-300 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 hover:bg-emerald-100 disabled:opacity-50"
+                  onClick={() => {
+                    const url = createGoogleCalendarUrl({ title: form.title, description: form.description, dueAt: form.dueAt })
+                    window.open(url, '_blank')
+                  }}
+                >
+                  <CalendarDays size={14} /> + Google Agenda
                 </button>
+                <div className="flex gap-2">
+                  <button type="button" className="rounded border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50" onClick={() => setShowModal(false)}>Cancelar</button>
+                  <button type="submit" disabled={saving} className="rounded bg-blue-600 px-4 py-2 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-50">
+                    {saving ? 'Salvando...' : 'Criar Tarefa'}
+                  </button>
+                </div>
               </div>
             </form>
           </div>
@@ -1305,18 +1463,23 @@ function ContactsList() {
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [selectedContactId, setSelectedContactId] = useState<string | null>(null)
+
+  const loadContacts = () => {
+    setLoading(true)
+    listContacts({ search, page: 1, pageSize: 50 })
+      .then((data) => {
+        setContacts(data.contacts)
+        setTotal(data.pagination.total)
+        setError('')
+      })
+      .catch((err: Error) => setError(err.message))
+      .finally(() => setLoading(false))
+  }
 
   useEffect(() => {
     const timeout = window.setTimeout(() => {
-      setLoading(true)
-      listContacts({ search, page: 1, pageSize: 50 })
-        .then((data) => {
-          setContacts(data.contacts)
-          setTotal(data.pagination.total)
-          setError('')
-        })
-        .catch((err: Error) => setError(err.message))
-        .finally(() => setLoading(false))
+      loadContacts()
     }, 250)
     return () => window.clearTimeout(timeout)
   }, [search])
@@ -1327,58 +1490,126 @@ function ContactsList() {
         {loading && <TableMessage colSpan={6} text="Carregando contatos..." />}
         {!loading && contacts.length === 0 && <TableMessage colSpan={6} text="Nenhum contato encontrado." />}
         {contacts.map((contact) => (
-          <tr key={contact.id} className="border-b border-slate-100">
-            <td className="px-4 py-3 font-medium">{contact.name}</td>
-            <td className="px-4 py-3">{contact.company ?? '-'}</td>
-            <td className="px-4 py-3">{contact.phone ?? '-'}</td>
-            <td className="px-4 py-3">{contact.email ?? '-'}</td>
-            <td className="px-4 py-3">{contact.source ?? '-'}</td>
-            <td className="px-4 py-3">{new Date(contact.updated_at).toLocaleString('pt-BR')}</td>
+          <tr
+            key={contact.id}
+            onClick={() => setSelectedContactId(contact.id)}
+            className="cursor-pointer border-b border-slate-100 hover:bg-blue-50/50 transition"
+          >
+            <td className="px-4 py-3 font-bold text-slate-900">{contact.name}</td>
+            <td className="px-4 py-3 text-slate-600">{contact.company ?? '-'}</td>
+            <td className="px-4 py-3 font-mono text-slate-600">{contact.phone ?? '-'}</td>
+            <td className="px-4 py-3 text-slate-600">{contact.email ?? '-'}</td>
+            <td className="px-4 py-3">
+              <span className="rounded bg-slate-100 px-2 py-0.5 text-[11px] font-semibold uppercase text-slate-700">
+                {contact.source ?? 'manual'}
+              </span>
+            </td>
+            <td className="px-4 py-3 text-slate-400 text-xs">{new Date(contact.updated_at).toLocaleString('pt-BR')}</td>
           </tr>
         ))}
       </DataTable>
+
+      {selectedContactId && (
+        <ContactDetailDrawer
+          contactId={selectedContactId}
+          onClose={() => setSelectedContactId(null)}
+          onUpdated={(updated) => {
+            setContacts((prev) => prev.map((c) => (c.id === updated.id ? updated : c)))
+          }}
+          onDeleted={(deletedId) => {
+            setContacts((prev) => prev.filter((c) => c.id !== deletedId))
+            setSelectedContactId(null)
+          }}
+        />
+      )}
     </DataPage>
   )
 }
 
 function LeadsList() {
   const [leads, setLeads] = useState<CrmLead[]>([])
+  const [stages, setStages] = useState<PipelineStage[]>([])
   const [search, setSearch] = useState('')
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [selectedLead, setSelectedLead] = useState<CrmLead | null>(null)
+
+  const loadData = () => {
+    setLoading(true)
+    Promise.all([
+      listLeads({ search, page: 1, pageSize: 50 }),
+      getPipeline(),
+    ])
+      .then(([leadsData, pipelineData]) => {
+        setLeads(leadsData.leads)
+        setTotal(leadsData.pagination.total)
+        setStages(pipelineData.stages)
+        setError('')
+      })
+      .catch((err: Error) => setError(err.message))
+      .finally(() => setLoading(false))
+  }
 
   useEffect(() => {
     const timeout = window.setTimeout(() => {
-      setLoading(true)
-      listLeads({ search, page: 1, pageSize: 50 })
-        .then((data) => {
-          setLeads(data.leads)
-          setTotal(data.pagination.total)
-          setError('')
-        })
-        .catch((err: Error) => setError(err.message))
-        .finally(() => setLoading(false))
+      loadData()
     }, 250)
     return () => window.clearTimeout(timeout)
   }, [search])
 
   return (
-    <DataPage title="Leads" tab={`${total} lead(s)`} search={search} setSearch={setSearch} error={error}>
-      <DataTable columns={['Lead', 'Contato', 'Empresa', 'Etapa', 'Valor', 'Status']}>
+    <DataPage title="Leads & Negócios" tab={`${total} lead(s)`} search={search} setSearch={setSearch} error={error}>
+      <DataTable columns={['Oportunidade', 'Contato', 'Empresa', 'Etapa', 'Valor', 'Status']}>
         {loading && <TableMessage colSpan={6} text="Carregando leads..." />}
         {!loading && leads.length === 0 && <TableMessage colSpan={6} text="Nenhum lead encontrado." />}
         {leads.map((lead) => (
-          <tr key={lead.id} className="border-b border-slate-100">
-            <td className="px-4 py-3 font-medium">{lead.title}</td>
-            <td className="px-4 py-3">{lead.contact_name ?? '-'}</td>
-            <td className="px-4 py-3">{lead.contact_company ?? '-'}</td>
-            <td className="px-4 py-3">{lead.stage_name ?? '-'}</td>
-            <td className="px-4 py-3">{formatCurrency(lead.value_cents)}</td>
-            <td className="px-4 py-3"><span className="rounded bg-emerald-100 px-2 py-1 text-xs font-semibold text-emerald-700">{lead.status}</span></td>
+          <tr
+            key={lead.id}
+            onClick={() => setSelectedLead(lead)}
+            className="cursor-pointer border-b border-slate-100 hover:bg-blue-50/50 transition"
+          >
+            <td className="px-4 py-3 font-bold text-slate-900">{lead.title}</td>
+            <td className="px-4 py-3 text-slate-700">{lead.contact_name ?? '-'}</td>
+            <td className="px-4 py-3 text-slate-500">{lead.contact_company ?? '-'}</td>
+            <td className="px-4 py-3">
+              <span className="rounded-md bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-700">
+                {lead.stage_name ?? '-'}
+              </span>
+            </td>
+            <td className="px-4 py-3 font-extrabold text-slate-900">{formatCurrency(lead.value_cents)}</td>
+            <td className="px-4 py-3">
+              <span
+                className={`rounded px-2 py-0.5 text-[11px] font-bold uppercase tracking-wider ${
+                  lead.status === 'won'
+                    ? 'bg-emerald-100 text-emerald-800'
+                    : lead.status === 'lost'
+                    ? 'bg-rose-100 text-rose-800'
+                    : 'bg-blue-100 text-blue-800'
+                }`}
+              >
+                {lead.status === 'won' ? 'Ganho' : lead.status === 'lost' ? 'Perdido' : 'Aberto'}
+              </span>
+            </td>
           </tr>
         ))}
       </DataTable>
+
+      {selectedLead && (
+        <LeadDetailDrawer
+          lead={selectedLead}
+          stages={stages}
+          onClose={() => setSelectedLead(null)}
+          onUpdated={(updated) => {
+            setLeads((prev) => prev.map((l) => (l.id === updated.id ? updated : l)))
+            setSelectedLead(updated)
+          }}
+          onDeleted={(deletedId) => {
+            setLeads((prev) => prev.filter((l) => l.id !== deletedId))
+            setSelectedLead(null)
+          }}
+        />
+      )}
     </DataPage>
   )
 }
@@ -1409,35 +1640,122 @@ function DataTable({ columns, children }: { columns: string[]; children: React.R
   )
 }
 
-function SimpleTable({ title, tab, columns, empty, action }: { title: string; tab?: string; columns: string[]; empty: string; action?: string }) {
+function AuditLogsList() {
+  const [logs, setLogs] = useState<AuditLogEntry[]>([])
+  const [search, setSearch] = useState('')
+  const [entityType, setEntityType] = useState('all')
+  const [total, setTotal] = useState(0)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [expandedId, setExpandedId] = useState<string | null>(null)
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => {
+      setLoading(true)
+      listAuditLogs({ entityType, search, page: 1, pageSize: 50 })
+        .then((data) => {
+          setLogs(data.logs)
+          setTotal(data.pagination.total)
+          setError('')
+        })
+        .catch((err: Error) => setError(err.message))
+        .finally(() => setLoading(false))
+    }, 250)
+    return () => window.clearTimeout(timeout)
+  }, [entityType, search])
+
+  const getEventBadge = (type: string) => {
+    if (type.includes('created') || type.includes('login')) return 'bg-emerald-100 text-emerald-800 border-emerald-200'
+    if (type.includes('failed') || type.includes('deleted')) return 'bg-rose-100 text-rose-800 border-rose-200'
+    if (type.includes('updated') || type.includes('sent')) return 'bg-blue-100 text-blue-800 border-blue-200'
+    return 'bg-slate-100 text-slate-700 border-slate-200'
+  }
+
   return (
     <div>
-      <Topbar title={title} tab={tab} action={action} />
-      <div className="p-5">
-        <div className="overflow-hidden bg-white rounded border border-slate-200">
-          <div className="grid border-b border-slate-200 text-xs font-bold uppercase text-slate-400" style={{ gridTemplateColumns: `repeat(${columns.length}, minmax(160px, 1fr))` }}>
-            {columns.map((column) => <div key={column} className="border-r border-slate-100 p-4">{column}</div>)}
+      <Topbar title="Auditoria & Logs de Segurança" tab={`${total} evento(s) auditado(s)`} />
+      <div className="p-6 space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3 bg-white p-4 rounded border border-slate-200 shadow-sm">
+          <div className="flex items-center gap-2 flex-1 min-w-[240px]">
+            <Search size={18} className="text-slate-400" />
+            <input
+              type="text"
+              placeholder="Buscar por usuário, e-mail, evento ou ID..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="w-full bg-transparent text-sm outline-none placeholder:text-slate-400"
+            />
           </div>
-          <p className="p-4 text-sm text-slate-500">{empty}</p>
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-semibold text-slate-500">Filtrar Categoria:</span>
+            <select
+              value={entityType}
+              onChange={(e) => setEntityType(e.target.value)}
+              className="rounded border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-700 outline-none"
+            >
+              <option value="all">Todas as Categorias</option>
+              <option value="message">Mensagens & WhatsApp</option>
+              <option value="lead">Leads & Funil</option>
+              <option value="contact">Contatos</option>
+              <option value="task">Tarefas</option>
+              <option value="company">Empresas</option>
+              <option value="integration">Integrações & Meta</option>
+              <option value="auth">Autenticação & Acesso</option>
+            </select>
+          </div>
+        </div>
+
+        {error && <div className="rounded border border-red-200 bg-red-50 p-4 text-sm text-red-600">{error}</div>}
+
+        <div className="overflow-hidden bg-white rounded border border-slate-200 shadow-sm">
+          <DataTable columns={['Data e Hora', 'Usuário / Responsável', 'Evento Auditado', 'Categoria', 'Request ID', 'Ações']}>
+            {loading && <TableMessage colSpan={6} text="Carregando logs de auditoria..." />}
+            {!loading && logs.length === 0 && <TableMessage colSpan={6} text="Nenhum evento de auditoria encontrado." />}
+            {logs.map((log) => (
+              <>
+                <tr key={log.id} className="border-b border-slate-100 hover:bg-slate-50/50">
+                  <td className="px-4 py-3 font-mono text-xs text-slate-600">
+                    {new Date(log.created_at).toLocaleString('pt-BR')}
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="font-medium text-slate-900">{log.user_name ?? 'Sistema / Webhook'}</div>
+                    {log.user_email && <div className="text-xs text-slate-400">{log.user_email}</div>}
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className={`inline-block rounded-full border px-2.5 py-0.5 text-xs font-semibold ${getEventBadge(log.event_type)}`}>
+                      {log.event_type}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 text-xs uppercase font-bold text-slate-500">{log.entity_type}</td>
+                  <td className="px-4 py-3 font-mono text-xs text-slate-400">{log.request_id ? log.request_id.slice(0, 13) : '-'}</td>
+                  <td className="px-4 py-3">
+                    <button
+                      className="rounded border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-100"
+                      onClick={() => setExpandedId(expandedId === log.id ? null : log.id)}
+                    >
+                      {expandedId === log.id ? 'Ocultar JSON' : 'Ver Detalhes'}
+                    </button>
+                  </td>
+                </tr>
+                {expandedId === log.id && (
+                  <tr key={`${log.id}-details`} className="bg-slate-900 text-slate-200">
+                    <td colSpan={6} className="p-4">
+                      <div className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-400">Trilha de Detalhes do Evento (Payload JSON):</div>
+                      <pre className="overflow-x-auto rounded bg-slate-950 p-3 font-mono text-xs text-emerald-400">
+                        {JSON.stringify(log.payload, null, 2)}
+                      </pre>
+                    </td>
+                  </tr>
+                )}
+              </>
+            ))}
+          </DataTable>
         </div>
       </div>
     </div>
   )
 }
-
-function EmptyFeature({ title, body }: { title: string; body: string }) {
-  return (
-    <div>
-      <Topbar title={title} />
-      <div className="grid min-h-[calc(100vh-4rem)] place-items-center p-8 text-center bg-slate-50/50">
-        <div>
-          <h3 className="text-xl font-semibold text-slate-900">{title}</h3>
-          <p className="mt-2 max-w-md text-sm text-slate-500">{body}</p>
-        </div>
-      </div>
-    </div>
-  )
-}
-
 
 export default Workspace
+
+export { Topbar }

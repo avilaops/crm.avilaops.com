@@ -57,12 +57,6 @@ Aplicacao:
 
 Banco e infraestrutura:
   db migrate               Aplica o schema do PostgreSQL
-  docker build             Constroi a imagem de producao
-  docker up                Sobe a stack isolada
-  docker down              Encerra a stack
-  docker status            Mostra os containers da stack
-  docker logs              Acompanha os logs da aplicacao
-  docker migrate           Aplica o schema dentro da stack
   worker dev               Inicia o Worker Meta localmente
   worker typecheck         Valida o Worker Meta
   worker deploy            Publica o Worker Meta
@@ -212,7 +206,7 @@ function resolveInvocation(command, args) {
     return { command: process.execPath, args: [npmCli, ...args] };
   }
 
-  if (command === "git" || command === "docker") {
+  if (command === "git") {
     return { command: `${command}.exe`, args };
   }
 
@@ -281,7 +275,6 @@ async function doctor(projectRoot, args, json) {
   const envPath = resolve(projectRoot, optionValue(args, "--file", profile.defaultFile));
   const env = inspectEnvFile(envPath, profileName);
   const npm = probe("npm");
-  const docker = probe("docker");
   const nodeMajor = Number(process.versions.node.split(".")[0]);
   const checks = [
     {
@@ -314,11 +307,6 @@ async function doctor(projectRoot, args, json) {
           : env.placeholders.length > 0
             ? `valores de exemplo: ${env.placeholders.join(", ")}`
             : `${env.configured.length} variaveis obrigatorias configuradas`,
-    },
-    {
-      name: "Docker",
-      status: docker.available ? "ok" : "warn",
-      detail: docker.version ?? "nao encontrado; necessario apenas para a stack Docker",
     },
   ];
 
@@ -447,20 +435,6 @@ export async function runCli(argv) {
   if (command === "db") {
     if (args[1] !== "migrate") throw new Error("Use: agenda db migrate");
     return runNpmScript(projectRoot, "db:migrate", args.slice(2));
-  }
-
-  if (command === "docker") {
-    const scripts = {
-      build: "docker:build",
-      up: "docker:up",
-      down: "docker:down",
-      status: "docker:status",
-      logs: "docker:logs",
-      migrate: "docker:migrate",
-    };
-    const action = args[1];
-    if (!scripts[action]) throw new Error("Use: agenda docker build|up|down|status|logs|migrate");
-    return runNpmScript(projectRoot, scripts[action], args.slice(2));
   }
 
   if (command === "worker") {
