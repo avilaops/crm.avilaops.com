@@ -1,6 +1,6 @@
 # Avila Ops Product Rules
 
-Estas regras valem para este projeto e para produtos da Avila Ops, especialmente `avila.inc` e `cliente.avila.inc`.
+Estas regras valem para este projeto e para produtos da Avila Ops, especialmente `avilaops.com` e `cliente.avilaops.com`.
 
 ## Regra Principal
 
@@ -20,7 +20,7 @@ Segurança é requisito básico, mas não deve limitar a exploração de ideias.
 
 ## Visão Do Portal
 
-O portal `cliente.avila.inc` deve evoluir para um sistema operacional digital para pequenas empresas: o cliente entra, informa o que deseja construir e a plataforma organiza domínio, site, e-mail, identidade, redes sociais, pagamentos, automações e suporte em uma jornada única.
+O portal `cliente.avilaops.com` deve evoluir para um sistema operacional digital para pequenas empresas: o cliente entra, informa o que deseja construir e a plataforma organiza domínio, site, e-mail, identidade, redes sociais, pagamentos, automações e suporte em uma jornada única.
 
 ## Regras Disponíveis
 

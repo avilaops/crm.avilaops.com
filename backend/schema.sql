@@ -186,6 +186,60 @@ create table if not exists integrations (
   unique (tenant_id, provider)
 );
 
+-- ── Conciliação com o ERP (erp.avilaops.com) ────────────────────────────────
+--
+-- O CRM e o ERP não compartilham banco nem id: são dois sistemas com donos
+-- distintos de cada dado — aqui mora o relacionamento (conversa, funil,
+-- tarefa), lá mora a transação (pedido, pagamento, estoque, fiscal). A ponte
+-- entre os dois é esta tabela, espelho de `ExternalReference` no ERP.
+--
+-- Guardar `erp_customer_id` como coluna em `contacts` teria sido mais curto e
+-- pior: o próximo sistema pediria outra coluna, e a limpeza de um vínculo
+-- errado viraria um UPDATE em massa.
+create table if not exists external_references (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null references tenants(id) on delete cascade,
+  system text not null,
+  entity_type text not null,
+  entity_id uuid not null,
+  external_id text not null,
+  metadata jsonb not null default '{}'::jsonb,
+  synced_at timestamptz not null default now(),
+  created_at timestamptz not null default now(),
+  unique (tenant_id, system, entity_type, entity_id),
+  unique (tenant_id, system, entity_type, external_id)
+);
+
+create index if not exists external_references_system_idx on external_references(tenant_id, system);
+
+-- Idempotência de entrada. O ERP entrega pelo menos uma vez — é o contrato do
+-- outbox dele —, então o mesmo `order.confirmed` chega duas vezes com alguma
+-- frequência. Sem este unique, a segunda entrega criaria o segundo lead.
+create table if not exists inbound_events (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null references tenants(id) on delete cascade,
+  source text not null,
+  external_id text not null,
+  event_type text not null,
+  payload jsonb not null default '{}'::jsonb,
+  processed_at timestamptz,
+  error text,
+  created_at timestamptz not null default now(),
+  unique (tenant_id, source, external_id)
+);
+
+create index if not exists inbound_events_pending_idx on inbound_events(tenant_id, source, processed_at);
+
+-- CPF/CNPJ é a chave canônica de pessoa no ERP (documento fiscal). Aqui ele é
+-- opcional: um lead de Instagram não tem documento, e exigir um impediria o
+-- CRM de fazer o que ele faz melhor, que é capturar cedo.
+alter table contacts add column if not exists cpf_cnpj text;
+create index if not exists contacts_cpf_cnpj_idx on contacts(tenant_id, cpf_cnpj) where cpf_cnpj is not null;
+
+-- Fechamento do ciclo: o lead que virou pedido lá aponta para ele aqui.
+alter table leads add column if not exists erp_order_id text;
+alter table leads add column if not exists won_at timestamptz;
+
 create table if not exists events (
   id uuid primary key default gen_random_uuid(),
   tenant_id uuid references tenants(id) on delete cascade,
@@ -231,3 +285,361 @@ cross join (
 ) as stage(name, position, color)
 where t.slug = 'avila-ops'
 on conflict (pipeline_id, position) do nothing;
+
+-- ── E-mail e newsletter ─────────────────────────────────────────────────────
+--
+-- A conta de e-mail (IMAP para ler, SMTP para enviar) é cadastrada pela tela,
+-- não por variável de ambiente: quem troca a senha da caixa é o Nicolas, e ele
+-- não deveria precisar de deploy para isso. A senha vai criptografada na mesma
+-- coluna `app_secret` que o resto das integrações usa.
+
+alter table contacts add column if not exists tags text[] not null default '{}';
+alter table contacts add column if not exists newsletter_status text not null default 'subscribed';
+alter table contacts add column if not exists unsubscribed_at timestamptz;
+
+create index if not exists contacts_newsletter_idx
+  on contacts(tenant_id, newsletter_status);
+create index if not exists contacts_email_idx
+  on contacts(tenant_id, lower(email)) where email is not null;
+
+create table if not exists newsletter_campaigns (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null references tenants(id) on delete cascade,
+  name text not null,
+  subject text not null,
+  preview_text text,
+  format text not null default 'html',
+  html text,
+  body_text text,
+  image_url text,
+  image_alt text,
+  image_link_url text,
+  audience_tags text[] not null default '{}',
+  status text not null default 'draft',
+  recipient_count int not null default 0,
+  sent_count int not null default 0,
+  failed_count int not null default 0,
+  created_by_user_id uuid references users(id) on delete set null,
+  sent_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint newsletter_campaigns_format_check check (format in ('html', 'text', 'image')),
+  constraint newsletter_campaigns_status_check check (status in ('draft', 'sending', 'sent', 'failed'))
+);
+
+create index if not exists newsletter_campaigns_status_idx
+  on newsletter_campaigns(tenant_id, status, created_at desc);
+
+-- Uma linha por destinatário. A chave única é o que faz "tentar de novo"
+-- retomar o envio em vez de mandar tudo outra vez.
+create table if not exists newsletter_deliveries (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null references tenants(id) on delete cascade,
+  campaign_id uuid not null references newsletter_campaigns(id) on delete cascade,
+  contact_id uuid references contacts(id) on delete set null,
+  email text not null,
+  status text not null default 'pending',
+  provider_id text,
+  error text,
+  sent_at timestamptz,
+  created_at timestamptz not null default now(),
+  unique (campaign_id, email),
+  constraint newsletter_deliveries_status_check check (status in ('pending', 'sent', 'failed', 'skipped'))
+);
+
+create index if not exists newsletter_deliveries_campaign_idx
+  on newsletter_deliveries(campaign_id, status);
+
+-- Remetentes já vistos na caixa de entrada. Serve para a tela de e-mail
+-- oferecer "cadastrar contato" sabendo quantas vezes aquela pessoa escreveu e
+-- quando foi a última vez, sem reprocessar a caixa inteira a cada abertura.
+create table if not exists mail_senders (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null references tenants(id) on delete cascade,
+  email text not null,
+  name text,
+  message_count int not null default 1,
+  last_subject text,
+  last_seen_at timestamptz not null default now(),
+  status text not null default 'new',
+  contact_id uuid references contacts(id) on delete set null,
+  created_at timestamptz not null default now(),
+  unique (tenant_id, email),
+  constraint mail_senders_status_check check (status in ('new', 'registered', 'ignored'))
+);
+
+create index if not exists mail_senders_status_idx
+  on mail_senders(tenant_id, status, last_seen_at desc);
+
+-- ── Automação do e-mail ─────────────────────────────────────────────────────
+--
+-- O motor roda dentro do próprio servidor, num laço com relógio. Não é fila
+-- externa de propósito: o volume é de centenas por dia, não de milhões, e um
+-- Redis a mais seria mais coisa para manter do que para ganhar.
+--
+-- `enabled` começa desligado. Automação que já nasce ligada é o jeito clássico
+-- de descobrir que ela funciona por um e-mail que não devia ter saído.
+
+create table if not exists automation_settings (
+  tenant_id uuid primary key references tenants(id) on delete cascade,
+  enabled boolean not null default false,
+  mailbox_sync_minutes int not null default 15,
+  send_batch_size int not null default 20,
+  send_interval_seconds int not null default 20,
+  daily_cap int not null default 200,
+  updated_at timestamptz not null default now(),
+  constraint automation_settings_ritmo_check check (
+    mailbox_sync_minutes between 1 and 1440
+    and send_batch_size between 1 and 200
+    and send_interval_seconds between 0 and 3600
+    and daily_cap between 0 and 5000
+  )
+);
+
+-- Diário de bordo: toda execução deixa rastro, inclusive a que não fez nada.
+-- Sem isso, "por que não enviou?" não tem resposta.
+create table if not exists automation_runs (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null references tenants(id) on delete cascade,
+  job text not null,
+  status text not null,
+  detail jsonb not null default '{}'::jsonb,
+  started_at timestamptz not null default now(),
+  finished_at timestamptz,
+  constraint automation_runs_status_check check (status in ('ok', 'error', 'skipped'))
+);
+
+create index if not exists automation_runs_recentes_idx
+  on automation_runs(tenant_id, started_at desc);
+
+-- Campanha agendada e ritmo por campanha.
+alter table newsletter_campaigns add column if not exists scheduled_at timestamptz;
+alter table newsletter_campaigns add column if not exists last_dispatch_at timestamptz;
+
+-- O status ganhou 'scheduled' e 'paused'; a restrição antiga não os conhecia.
+alter table newsletter_campaigns drop constraint if exists newsletter_campaigns_status_check;
+alter table newsletter_campaigns add constraint newsletter_campaigns_status_check
+  check (status in ('draft', 'scheduled', 'sending', 'paused', 'sent', 'failed'));
+
+create index if not exists newsletter_campaigns_agendadas_idx
+  on newsletter_campaigns(tenant_id, status, scheduled_at)
+  where status in ('scheduled', 'sending');
+
+-- ── Captação com dupla confirmação ──────────────────────────────────────────
+--
+-- Pedido de inscrição feito no site. Vira contato só depois que a pessoa
+-- confirma pelo link: quem só digita o endereço de outro não consegue inscrever
+-- ninguém, e a confirmação é a prova de consentimento que vale numa reclamação.
+
+create table if not exists newsletter_signups (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null references tenants(id) on delete cascade,
+  email text not null,
+  name text,
+  source text not null default 'site',
+  tags text[] not null default '{}',
+  status text not null default 'pending',
+  request_ip text,
+  user_agent text,
+  confirmation_sent_at timestamptz,
+  confirmed_at timestamptz,
+  expires_at timestamptz not null default now() + interval '7 days',
+  created_at timestamptz not null default now(),
+  unique (tenant_id, email),
+  constraint newsletter_signups_status_check check (status in ('pending', 'confirmed', 'expired'))
+);
+
+create index if not exists newsletter_signups_pendentes_idx
+  on newsletter_signups(tenant_id, status, confirmation_sent_at);
+
+-- ── Agente de IA ────────────────────────────────────────────────────────────
+--
+-- A chave do provedor vive em `integrations` (provider 'ai'), criptografada,
+-- como a da conta de e-mail: trocar chave não pode exigir deploy.
+--
+-- Toda chamada deixa registro aqui. IA sem trilha de uso vira caixa-preta cara:
+-- ninguém sabe o que foi perguntado, quanto custou, nem por que respondeu
+-- aquilo.
+create table if not exists ai_runs (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null references tenants(id) on delete cascade,
+  user_id uuid references users(id) on delete set null,
+  job text not null,
+  model text not null,
+  status text not null default 'ok',
+  input_tokens int not null default 0,
+  output_tokens int not null default 0,
+  duration_ms int not null default 0,
+  detail jsonb not null default '{}'::jsonb,
+  error text,
+  created_at timestamptz not null default now(),
+  constraint ai_runs_status_check check (status in ('ok', 'error'))
+);
+
+create index if not exists ai_runs_recentes_idx on ai_runs(tenant_id, created_at desc);
+
+-- Sugestão de catalogação que espera revisão humana. A IA propõe; quem aplica
+-- é a pessoa — ou o lote, depois de conferir a amostra.
+create table if not exists ai_suggestions (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null references tenants(id) on delete cascade,
+  entity_type text not null,
+  entity_id uuid not null,
+  job text not null,
+  payload jsonb not null default '{}'::jsonb,
+  status text not null default 'pending',
+  applied_at timestamptz,
+  created_at timestamptz not null default now(),
+  unique (tenant_id, entity_type, entity_id, job),
+  constraint ai_suggestions_status_check check (status in ('pending', 'applied', 'discarded'))
+);
+
+create index if not exists ai_suggestions_pendentes_idx
+  on ai_suggestions(tenant_id, job, status, created_at desc);
+
+-- ── Catálogo de Produtos e Serviços ──────────────────────────────────────────
+create table if not exists products (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null references tenants(id) on delete cascade,
+  name text not null,
+  sku text,
+  category text not null default 'Geral',
+  price_cents int not null default 0,
+  description text,
+  active boolean not null default true,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists products_tenant_idx on products(tenant_id, active);
+
+-- ── Regras de Automação Comercial e n8n ─────────────────────────────────────
+create table if not exists automation_rules (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null references tenants(id) on delete cascade,
+  name text not null,
+  trigger_type text not null,
+  conditions jsonb not null default '{}'::jsonb,
+  action_type text not null,
+  action_payload jsonb not null default '{}'::jsonb,
+  active boolean not null default true,
+  runs_count int not null default 0,
+  last_run_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists automation_rules_tenant_idx on automation_rules(tenant_id, active, trigger_type);
+
+-- ── Segmentos e Públicos ───────────────────────────────────────────────────
+create table if not exists segments (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null references tenants(id) on delete cascade,
+  name text not null,
+  description text,
+  rules jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists segments_tenant_idx on segments(tenant_id);
+
+-- ── Central de Mídia e Documentos ──────────────────────────────────────────
+create table if not exists media_files (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null references tenants(id) on delete cascade,
+  name text not null,
+  file_type text not null default 'document',
+  file_size_bytes bigint not null default 0,
+  url text not null,
+  category text not null default 'Geral',
+  created_at timestamptz not null default now()
+);
+
+create index if not exists media_files_tenant_idx on media_files(tenant_id, category);
+
+-- ── Chat Interno da Equipe ─────────────────────────────────────────────────
+create table if not exists team_channels (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null references tenants(id) on delete cascade,
+  name text not null,
+  description text,
+  is_default boolean not null default false,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists team_messages (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null references tenants(id) on delete cascade,
+  channel_id uuid not null references team_channels(id) on delete cascade,
+  user_id uuid references users(id) on delete set null,
+  user_name text not null,
+  body text not null,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists team_messages_channel_idx on team_messages(tenant_id, channel_id, created_at asc);
+
+-- Semeia canais de equipe padrão para tenants existentes
+insert into team_channels (tenant_id, name, description, is_default)
+select id, 'Geral', 'Canal geral da equipe para avisos e comunicados', true
+from tenants
+where slug = 'avila-ops'
+and not exists (
+  select 1 from team_channels tc where tc.tenant_id = tenants.id and tc.name = 'Geral'
+);
+
+insert into team_channels (tenant_id, name, description, is_default)
+select id, 'Vendas & Negociações', 'Discussões sobre propostas e fechamentos', false
+from tenants
+where slug = 'avila-ops'
+and not exists (
+  select 1 from team_channels tc where tc.tenant_id = tenants.id and tc.name = 'Vendas & Negociações'
+);
+
+insert into team_channels (tenant_id, name, description, is_default)
+select id, 'Suporte & Atendimento', 'Alinhamento e repasses de chamados', false
+from tenants
+where slug = 'avila-ops'
+and not exists (
+  select 1 from team_channels tc where tc.tenant_id = tenants.id and tc.name = 'Suporte & Atendimento'
+);
+
+-- ── Configurações Avançadas de Workspace, Chat e IA ────────────────────────
+create table if not exists tenant_settings (
+  tenant_id uuid primary key references tenants(id) on delete cascade,
+  workspace_name text not null default 'Ávila Ops Workspace',
+  cnpj text,
+  phone text,
+  email text,
+  address text,
+  timezone text not null default 'America/Sao_Paulo',
+  currency text not null default 'BRL',
+  business_hours jsonb not null default '{"enabled": true, "start": "08:00", "end": "18:00", "days": [1,2,3,4,5]}'::jsonb,
+  welcome_message text default 'Olá! Bem-vindo à Ávila Ops. Como podemos ajudar seu negócio hoje?',
+  away_message text default 'Nosso horário de atendimento é de seg a sex das 08h às 18h. Deixe sua mensagem e responderemos o mais breve possível!',
+  auto_assign boolean not null default true,
+  sla_minutes int not null default 15,
+  ai_copilot_enabled boolean not null default true,
+  ai_autonomous_reply boolean not null default false,
+  ai_tone text not null default 'consultivo',
+  ai_custom_instructions text default 'Você é o consultor de negócios e vendas da Ávila Ops. Seja objetivo, cordial e foque em entender o cenário do cliente antes de recomendar soluções.',
+  updated_at timestamptz not null default now()
+);
+
+-- ── Fontes de Conhecimento RAG para IA ──────────────────────────────────────
+create table if not exists knowledge_sources (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null references tenants(id) on delete cascade,
+  title text not null,
+  type text not null default 'faq',
+  content text not null,
+  active boolean not null default true,
+  times_used int not null default 0,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists knowledge_sources_tenant_idx on knowledge_sources(tenant_id, active);
+
+
