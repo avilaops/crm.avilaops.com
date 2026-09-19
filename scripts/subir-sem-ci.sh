@@ -51,7 +51,7 @@ npm run build
 echo "▸ empacotando"
 PACOTE="$(mktemp -t crm-dist-XXXXXX.tgz)"
 trap 'rm -f "$PACOTE"' EXIT
-tar czf "$PACOTE" dist dist-server backend scripts
+tar czf "$PACOTE" dist dist-server backend scripts package.json package-lock.json
 echo "· $(du -h "$PACOTE" | cut -f1)"
 
 echo "▸ enviando"
@@ -78,10 +78,20 @@ ATUAL=\$(docker inspect --format '{{.Image}}' agenda-crm-app | cut -d: -f2)
 docker tag \$ATUAL $IMAGEM:anterior-$HOJE
 echo "· imagem anterior guardada como $IMAGEM:anterior-$HOJE"
 
+# O \`npm ci\` reconcilia as dependencias com o lockfile do commit que esta
+# subindo. Sem ele a camada herda o node_modules da imagem anterior, e qualquer
+# dependencia nova entra no bundle sem existir no container: o
+# \`node dist-server/server.js\` morre no import e o app fica em crash-loop.
+# Foi o que aconteceria com @fastify/multipart, do upload de midia do inbox.
+#
+# Completo, e nao \`--omit=dev\`: o passo de migracao abaixo chama
+# \`npm run db:migrate\`, que e \`tsx backend/migrate.ts\`, e o tsx e devDependency.
 cat > Dockerfile <<'FIM'
 FROM BASE_AQUI
 LABEL org.opencontainers.image.revision="COMMIT_AQUI"
 WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci --no-audit --no-fund
 COPY dist ./dist
 COPY dist-server ./dist-server
 COPY backend ./backend
