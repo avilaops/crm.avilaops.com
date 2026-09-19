@@ -1,4 +1,5 @@
 import { config } from "dotenv";
+import fastifyMultipart from "@fastify/multipart";
 import fastifyStatic from "@fastify/static";
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import { existsSync } from "node:fs";
@@ -10,6 +11,9 @@ import QRCode from "qrcode";
 import { z } from "zod";
 import { query } from "./db.js";
 import { ehMensagemDeAudio, transcreverEGravar } from "./transcricao.js";
+import { publishRealtime, publishRealtimeAsync, registerRealtimeRoutes, startRealtime } from "./realtime.js";
+import { ingestInboundMedia, maxMediaBytes, registerWhatsAppMediaRoutes, WHATSAPP_MEDIA_TYPES } from "./whatsapp-media.js";
+import { assertSendWindow, registerWhatsAppTemplateRoutes, WINDOW_SELECT_SQL } from "./whatsapp-templates.js";
 import { registerMailRoutes } from "./routes-mail.js";
 import { startAutomation } from "./automation.js";
 import { registerAiRoutes } from "./routes-ai.js";
@@ -460,6 +464,22 @@ async function getOrCreateConversation(tenantId: string, channelId: string | nul
   return created.rows[0].id;
 }
 
+/**
+ * Reenvia a mensagem ja gravada para quem esta com a conversa aberta.
+ *
+ * Usado pelos caminhos que alteram a mensagem depois de inserida —
+ * transcricao de audio e confirmacao de entrega da Meta.
+ */
+async function notificarMensagemAtualizada(tenantId: string, conversationId: string, messageId: string) {
+  const atualizada = await query(
+    `select id, conversation_id, external_id, direction, sender_name, sender_phone, body, message_type, status, error_message, request_id, media_id, sent_at, created_at
+     from messages where tenant_id = $1 and id = $2`,
+    [tenantId, messageId],
+  );
+  if (!atualizada.rows[0]) return;
+  await publishRealtime({ type: "message.updated", tenantId, conversationId, data: atualizada.rows[0] });
+}
+
 async function processWhatsAppWebhook(tenantId: string, payload: WhatsAppWebhookPayload) {
   let messages = 0;
   let statuses = 0;
@@ -479,11 +499,11 @@ async function processWhatsAppWebhook(tenantId: string, payload: WhatsAppWebhook
         const contactId = await upsertWhatsAppContact(tenantId, waId, contactName);
         const conversationId = await getOrCreateConversation(tenantId, channelId, contactId);
         const sentAt = messageTimestamp(message);
-        const inserted = await query<{ id: string }>(
+        const inserted = await query<{ id: string; conversation_id: string; direction: string; body: string | null; message_type: string; status: string; sent_at: string }>(
           `insert into messages (tenant_id, conversation_id, external_id, direction, sender_name, sender_phone, body, message_type, metadata, sent_at)
            values ($1, $2, $3, 'inbound', $4, $5, $6, $7, $8, $9)
            on conflict (tenant_id, external_id) do nothing
-           returning id`,
+           returning id, conversation_id, external_id, direction, sender_name, sender_phone, body, message_type, status, error_message, request_id, media_id, sent_at, created_at`,
           [
             tenantId,
             conversationId,
@@ -496,14 +516,50 @@ async function processWhatsAppWebhook(tenantId: string, payload: WhatsAppWebhook
             sentAt,
           ],
         );
-        if ((inserted.rowCount ?? 0) > 0) messages += 1;
+        const novaMensagem = inserted.rows[0] ?? null;
+        if (novaMensagem) messages += 1;
+
+        // Anexo baixado em segundo plano, pelo mesmo motivo da transcricao
+        // abaixo: um video de 15 MB leva segundos e a Meta reentrega o evento
+        // se a resposta demorar. A mensagem ja esta no inbox; o anexo aparece
+        // por evento assim que o download termina.
+        //
+        // Um audio passa pelos dois caminhos e baixa duas vezes, de proposito:
+        // sao respostas a perguntas diferentes — a transcricao alimenta busca,
+        // funil e relatorio, e o arquivo guardado deixa o atendente ouvir o
+        // tom do cliente. Acoplar os dois economizaria um download e criaria a
+        // dependencia de a midia so existir quando a transcricao funcionar.
+        const tipoRecebido = typeof message.type === "string" ? message.type : "unknown";
+        if (novaMensagem && WHATSAPP_MEDIA_TYPES.has(tipoRecebido)) {
+          const anexo = message[tipoRecebido] as { id?: unknown; mime_type?: unknown; filename?: unknown; caption?: unknown } | undefined;
+          const mediaId = typeof anexo?.id === "string" ? anexo.id : null;
+          if (mediaId) {
+            void getMetaIntegration(tenantId)
+              .then((meta) => {
+                const token = meta?.integration?.access_token;
+                if (!token) return;
+                return ingestInboundMedia({
+                  tenantId,
+                  conversationId,
+                  messageId: novaMensagem.id,
+                  mediaId,
+                  mimeTypeHint: typeof anexo?.mime_type === "string" ? anexo.mime_type : null,
+                  fileNameHint: typeof anexo?.filename === "string" ? anexo.filename : null,
+                  caption: typeof anexo?.caption === "string" ? anexo.caption : null,
+                  accessToken: token,
+                  graphVersion: META_GRAPH_VERSION,
+                });
+              })
+              .catch((erro) => console.warn("[midia] download falhou em segundo plano:", erro));
+          }
+        }
 
         // Audio vira texto pelo Avila IA. Sem `await` de proposito: a Meta
         // reenvia o evento se demorarmos para responder, e transcrever leva
         // segundos. A mensagem ja entrou como `[audio]`; o texto chega logo
         // depois por update. Falhar aqui nao pode derrubar a ingestao.
-        const mensagemId = inserted.rows[0]?.id;
-        const tipoDaMensagem = typeof message.type === "string" ? message.type : "unknown";
+        const mensagemId = novaMensagem?.id;
+        const tipoDaMensagem = tipoRecebido;
         if (mensagemId && ehMensagemDeAudio(tipoDaMensagem)) {
           const midia = message[tipoDaMensagem] as { id?: unknown } | undefined;
           const mediaId = typeof midia?.id === "string" ? midia.id : null;
@@ -520,18 +576,43 @@ async function processWhatsAppWebhook(tenantId: string, payload: WhatsAppWebhook
                   executarQuery: (texto, valores) => query(texto, valores as never[]),
                 });
               })
+              // O texto substitui o `[audio]` por update; sem avisar a tela, a
+              // conversa aberta continuaria mostrando o marcador ate o F5.
+              .then(() => notificarMensagemAtualizada(tenantId, conversationId, mensagemId))
               .catch((erro) => console.warn("[transcricao] falhou em segundo plano:", erro));
           }
         }
 
-        await query(
+        // O nao lido so sobe quando a mensagem e nova: a Meta reentrega o
+        // mesmo evento quando demoramos a responder, e contar de novo deixaria
+        // um badge que nunca zera.
+        const conversaAtualizada = await query<{ unread_count: number; status: string; last_message_at: string; last_customer_message_at: string }>(
           `update conversations
            set status = 'waiting', last_message_at = greatest(coalesce(last_message_at, $2::timestamptz), $2::timestamptz),
                last_customer_message_at = greatest(coalesce(last_customer_message_at, $2::timestamptz), $2::timestamptz),
+               unread_count = unread_count + $3,
                updated_at = now()
-           where id = $1`,
-          [conversationId, sentAt],
+           where id = $1
+           returning unread_count, status, last_message_at, last_customer_message_at`,
+          [conversationId, sentAt, novaMensagem ? 1 : 0],
         );
+
+        if (novaMensagem) {
+          await publishRealtime({ type: "message.created", tenantId, conversationId, data: novaMensagem });
+          await publishRealtime({
+            type: "conversation.updated",
+            tenantId,
+            conversationId,
+            data: {
+              id: conversationId,
+              unread_count: conversaAtualizada.rows[0]?.unread_count ?? 0,
+              status: conversaAtualizada.rows[0]?.status ?? "waiting",
+              last_message_at: conversaAtualizada.rows[0]?.last_message_at ?? sentAt,
+              last_customer_message_at: conversaAtualizada.rows[0]?.last_customer_message_at ?? sentAt,
+              preview: novaMensagem.body,
+            },
+          });
+        }
       }
 
       for (const status of value?.statuses ?? []) {
@@ -539,10 +620,11 @@ async function processWhatsAppWebhook(tenantId: string, payload: WhatsAppWebhook
         const externalId = typeof status.id === "string" ? status.id : null;
         const deliveryStatus = typeof status.status === "string" ? status.status : "unknown";
         if (externalId) {
-          await query(
+          const atualizada = await query<{ id: string; conversation_id: string }>(
             `update messages
              set status = $3, error_message = $4, metadata = metadata || $5::jsonb
-             where tenant_id = $1 and external_id = $2`,
+             where tenant_id = $1 and external_id = $2
+             returning id, conversation_id`,
             [
               tenantId,
               externalId,
@@ -551,6 +633,17 @@ async function processWhatsAppWebhook(tenantId: string, payload: WhatsAppWebhook
               JSON.stringify({ latest_status: status }),
             ],
           );
+          // Os tiques de entregue e lido chegam por aqui: sem o evento o
+          // atendente fica olhando "enviado" ate recarregar a pagina.
+          const alvo = atualizada.rows[0];
+          if (alvo) {
+            publishRealtimeAsync({
+              type: "message.updated",
+              tenantId,
+              conversationId: alvo.conversation_id,
+              data: { id: alvo.id, status: deliveryStatus },
+            });
+          }
         }
         await recordEvent(tenantId, "message", "meta.message_status", { external_id: externalId, status: deliveryStatus, raw: status });
       }
@@ -689,6 +782,28 @@ function canManage(user: AuthUser) {
   return user.role === "admin" || user.role === "gerente" || user.role === "manager";
 }
 
+/**
+ * Marca a conversa depois de um envio do atendente.
+ *
+ * Uma falha nao move `last_agent_message_at`: esse carimbo alimenta o SLA e a
+ * fila de espera, e contar uma mensagem que a Meta recusou tiraria da fila
+ * justamente o cliente que continua sem resposta.
+ */
+async function touchConversationAfterSend(tenantId: string, conversationId: string, status: string) {
+  await query(
+    `update conversations
+     set status = case when $3 = 'failed' then status else 'open' end,
+         last_message_at = case when $3 = 'failed' then last_message_at else now() end,
+         last_agent_message_at = case when $3 = 'failed' then last_agent_message_at else now() end,
+         updated_at = now()
+     where tenant_id = $1 and id = $2`,
+    [tenantId, conversationId, status],
+  );
+  if (status !== "failed") {
+    publishRealtimeAsync({ type: "conversation.updated", tenantId, conversationId, data: { id: conversationId, status: "open" } });
+  }
+}
+
 async function recordEvent(tenantId: string, entityType: string, eventType: string, payload: unknown, actorUserId?: string | null, entityId?: string | null, requestId?: string | null) {
   await query("insert into events (tenant_id, actor_user_id, entity_type, entity_id, event_type, payload, request_id) values ($1, $2, $3, $4, $5, $6, $7)", [
     tenantId,
@@ -723,6 +838,13 @@ async function main() {
     } catch (error) {
       done(error as Error);
     }
+  });
+
+  // Anexos do inbox chegam como multipart. O limite fica no plugin tambem, e
+  // nao so na rota: sem ele um upload gigante seria lido inteiro na memoria
+  // antes de alguem poder recusa-lo.
+  await app.register(fastifyMultipart, {
+    limits: { fileSize: maxMediaBytes(), files: 1, fields: 10 },
   });
 
   app.addHook("onRequest", async (request) => {
@@ -1019,7 +1141,8 @@ async function main() {
           : "coalesce(c.last_message_at, c.created_at)";
     const result = await query(
       `select c.id, c.channel_id, c.contact_id, c.assigned_user_id, c.status, c.archived_at,
-              c.last_message_at, c.last_customer_message_at, c.last_agent_message_at, c.created_at,
+              c.last_message_at, c.last_customer_message_at, c.last_agent_message_at, c.created_at, c.unread_count,
+              ch.provider as channel_provider,
               ct.name as contact_name, ct.phone as contact_phone, ct.email as contact_email, ct.company as contact_company,
               ch.display_name as channel_name, ch.phone_number as channel_phone, ch.status as channel_status,
               u.name as assigned_user_name,
@@ -1028,7 +1151,8 @@ async function main() {
                 then extract(epoch from (now() - c.last_customer_message_at))::int
                 else 0
               end as waiting_seconds,
-              (c.assigned_user_id is null and c.status <> 'archived') as unassigned
+              (c.assigned_user_id is null and c.status <> 'archived') as unassigned,
+              ${WINDOW_SELECT_SQL}
        from conversations c
        left join contacts ct on ct.id = c.contact_id
        left join channels ch on ch.id = c.channel_id
@@ -1045,7 +1169,19 @@ async function main() {
        where ${where.join(" and ")}`,
       countParams,
     );
-    return { conversations: result.rows, pagination: { page: filters.page, pageSize: filters.pageSize, total: Number(count.rows[0]?.total ?? 0) } };
+    // Total do tenant, nao da pagina: o badge do menu tem que contar o que
+    // esta fora do filtro atual tambem.
+    const unread = await query<{ total: string; conversations: string }>(
+      `select coalesce(sum(unread_count), 0)::text as total, count(*) filter (where unread_count > 0)::text as conversations
+       from conversations where tenant_id = $1 and status <> 'archived'`,
+      [user.tenant_id],
+    );
+
+    return {
+      conversations: result.rows,
+      pagination: { page: filters.page, pageSize: filters.pageSize, total: Number(count.rows[0]?.total ?? 0) },
+      unread: { messages: Number(unread.rows[0]?.total ?? 0), conversations: Number(unread.rows[0]?.conversations ?? 0) },
+    };
   });
 
   app.get("/api/conversations/:id/messages", async (request, reply) => {
@@ -1053,13 +1189,39 @@ async function main() {
     if (!user) return;
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
     const result = await query(
-      `select id, conversation_id, external_id, direction, sender_name, sender_phone, body, message_type, status, error_message, request_id, sent_at, created_at
-       from messages
-       where tenant_id = $1 and conversation_id = $2
-       order by sent_at asc, created_at asc`,
+      `select m.id, m.conversation_id, m.external_id, m.direction, m.sender_name, m.sender_phone, m.body, m.message_type,
+              m.status, m.error_message, m.request_id, m.media_id, m.sent_at, m.created_at,
+              md.mime_type as media_mime_type, md.file_name as media_file_name, md.file_size as media_file_size,
+              md.status as media_status, md.caption as media_caption
+       from messages m
+       left join message_media md on md.id = m.media_id
+       where m.tenant_id = $1 and m.conversation_id = $2
+       order by m.sent_at asc, m.created_at asc`,
       [user.tenant_id, id],
     );
     return { messages: result.rows };
+  });
+
+  /**
+   * Zera o nao lido da conversa.
+   *
+   * Separado do GET de mensagens de proposito: abrir a conversa para consultar
+   * o historico nao e o mesmo que dar por lido, e o inbox precisa dos dois
+   * comportamentos.
+   */
+  app.post("/api/conversations/:id/read", async (request, reply) => {
+    const user = await requireAuth(request, reply);
+    if (!user) return;
+    const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+    const result = await query<{ id: string; unread_count: number }>(
+      `update conversations set unread_count = 0, last_read_at = now(), updated_at = now()
+       where tenant_id = $1 and id = $2
+       returning id, unread_count`,
+      [user.tenant_id, id],
+    );
+    if (!result.rows[0]) return reply.code(404).send({ error: "Conversa nao encontrada." });
+    publishRealtimeAsync({ type: "conversation.read", tenantId: user.tenant_id, conversationId: id, data: { id, unread_count: 0 } });
+    return { ok: true };
   });
 
   app.post("/api/conversations/:id/messages", async (request, reply) => {
@@ -1095,6 +1257,14 @@ async function main() {
     if (!row) return reply.code(404).send({ error: "Conversa nao encontrada." });
     if (!row.channel_external_id || !row.contact_phone) return reply.code(400).send({ error: "Conversa sem canal ou telefone valido." });
 
+    // A Meta recusa texto livre fora da janela de 24h. Deixar seguir daria um
+    // "enviado" na tela para uma mensagem que o cliente nunca recebeu — o 409
+    // chega antes e a tela troca para o seletor de templates.
+    const janela = await assertSendWindow(user.tenant_id, id);
+    if (!janela.allowed) {
+      return reply.code(409).send({ error: janela.reason, code: "window_closed", windowExpiresAt: janela.expiresAt ?? null });
+    }
+
     let externalId: string | null = null;
     let status = "sent";
     let errorMessage: string | null = null;
@@ -1125,7 +1295,7 @@ async function main() {
         responseMetadata = { offline_queued: true };
       }
     } else {
-      const { integration } = await getMetaIntegration();
+      const { integration } = await getMetaIntegration(user.tenant_id);
       if (!integration?.access_token) return reply.code(400).send({ error: "Meta ainda nao conectada." });
 
       const messagePayload = {
@@ -1156,7 +1326,7 @@ async function main() {
     const saved = await query(
       `insert into messages (tenant_id, conversation_id, external_id, direction, sender_name, body, message_type, metadata, status, idempotency_key, error_message, request_id, sent_at)
        values ($1, $2, $3, 'outbound', $4, $5, 'text', $6, $7, $8, $9, $10, now())
-       returning id, conversation_id, external_id, direction, sender_name, sender_phone, body, message_type, status, sent_at, created_at, error_message, request_id`,
+       returning id, conversation_id, external_id, direction, sender_name, sender_phone, body, message_type, status, sent_at, created_at, error_message, request_id, media_id`,
       [
         user.tenant_id,
         id,
@@ -1171,16 +1341,12 @@ async function main() {
       ],
     );
 
-    await query(
-      `update conversations
-       set status = case when $3 = 'failed' then status else 'open' end,
-           last_message_at = case when $3 = 'failed' then last_message_at else now() end,
-           last_agent_message_at = case when $3 = 'failed' then last_agent_message_at else now() end,
-           updated_at = now()
-       where tenant_id = $1 and id = $2`,
-      [user.tenant_id, id, status],
-    );
+    await touchConversationAfterSend(user.tenant_id, id, status);
     await recordEvent(user.tenant_id, "message", status === "failed" ? "message.outbound_failed" : "message.outbound_sent", { conversation_id: id, external_id: externalId }, user.id, saved.rows[0].id, requestId);
+
+    // Publicado mesmo quando falha: o outro atendente com a conversa aberta
+    // precisa ver a tentativa e o erro, nao um silencio.
+    publishRealtimeAsync({ type: "message.created", tenantId: user.tenant_id, conversationId: id, data: saved.rows[0] });
 
     if (status === "failed") return reply.code(502).send({ error: errorMessage, message: saved.rows[0], requestId });
     return { message: saved.rows[0], requestId };
@@ -1203,6 +1369,7 @@ async function main() {
       user.id,
       id,
     ]);
+    publishRealtimeAsync({ type: "conversation.updated", tenantId: user.tenant_id, conversationId: id, data: { id, status: "archived" } });
     return { ok: true };
   });
 
@@ -1266,6 +1433,15 @@ async function main() {
       id,
       JSON.stringify({ assigned_user_id: body.userId }),
     ]);
+    // Evita a briga classica de dois atendentes assumindo a mesma conversa: a
+    // fila do colega muda no mesmo instante.
+    const responsavel = await query<{ name: string }>("select name from users where tenant_id = $1 and id = $2", [user.tenant_id, body.userId ?? null]);
+    publishRealtimeAsync({
+      type: "conversation.updated",
+      tenantId: user.tenant_id,
+      conversationId: id,
+      data: { id, assigned_user_id: body.userId, assigned_user_name: responsavel.rows[0]?.name ?? null, unassigned: body.userId === null },
+    });
     return { ok: true };
   });
 
@@ -2421,6 +2597,24 @@ async function main() {
       throw error;
     }
   });
+
+  registerRealtimeRoutes(app, { requireAuth });
+  registerWhatsAppMediaRoutes(app, {
+    requireAuth,
+    recordEvent,
+    getMetaIntegration,
+    graphVersion: META_GRAPH_VERSION,
+    assertSendWindow,
+    touchConversationAfterSend,
+  });
+  registerWhatsAppTemplateRoutes(app, {
+    requireAuth,
+    recordEvent,
+    getMetaIntegration,
+    graphVersion: META_GRAPH_VERSION,
+    touchConversationAfterSend,
+  });
+  await startRealtime({ log: (mensagem, detalhe) => app.log.info({ detalhe }, mensagem) });
 
   registerMailRoutes(app, { requireAuth, encryptSecret, decryptSecret, recordEvent });
   registerAiRoutes(app, { requireAuth, encryptSecret, decryptSecret, recordEvent });

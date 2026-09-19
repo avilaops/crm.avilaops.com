@@ -200,6 +200,67 @@ create table if not exists events (
 
 alter table events add column if not exists request_id text;
 
+-- Inbox em tempo real: nao lidos por conversa.
+--
+-- O contador vive na conversa, e nao numa contagem por mensagem, porque a
+-- pergunta que a tela faz o tempo todo e "quantas faltam ler aqui" — resolver
+-- isso com count(*) em messages custaria uma varredura por linha da lista.
+alter table conversations add column if not exists unread_count int not null default 0;
+alter table conversations add column if not exists last_read_at timestamptz;
+
+create index if not exists conversations_tenant_last_message_idx on conversations(tenant_id, last_message_at desc);
+create index if not exists messages_conversation_sent_at_idx on messages(tenant_id, conversation_id, sent_at);
+
+-- Midia do WhatsApp. O binario fica no volume (`MEDIA_DIR`), nao no Postgres:
+-- audio e video de atendimento enchem o banco rapido e quebram o dump dos
+-- scripts de backup. A linha guarda o que a tela precisa para decidir o que
+-- renderizar antes de baixar o arquivo.
+create table if not exists message_media (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null references tenants(id) on delete cascade,
+  conversation_id uuid references conversations(id) on delete cascade,
+  direction text not null default 'inbound',
+  external_id text,
+  mime_type text not null default 'application/octet-stream',
+  file_name text,
+  file_size int,
+  sha256 text,
+  storage_path text,
+  caption text,
+  status text not null default 'pending',
+  error_message text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists message_media_tenant_created_at_idx on message_media(tenant_id, created_at desc);
+create unique index if not exists message_media_tenant_external_id_idx on message_media(tenant_id, external_id) where external_id is not null;
+
+alter table messages add column if not exists media_id uuid references message_media(id) on delete set null;
+
+-- Templates aprovados na Meta. Sao a unica forma de falar com quem nao
+-- escreve ha mais de 24h, entao a lista precisa estar no banco: consultar a
+-- Graph a cada abertura do inbox gastaria o rate limit da conta.
+create table if not exists whatsapp_templates (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null references tenants(id) on delete cascade,
+  channel_id uuid references channels(id) on delete set null,
+  waba_id text,
+  external_id text,
+  name text not null,
+  language text not null,
+  category text,
+  status text not null default 'PENDING',
+  components jsonb not null default '[]'::jsonb,
+  body_text text,
+  variable_count int not null default 0,
+  synced_at timestamptz not null default now(),
+  created_at timestamptz not null default now(),
+  unique (tenant_id, name, language)
+);
+
+create index if not exists whatsapp_templates_tenant_status_idx on whatsapp_templates(tenant_id, status);
+
 insert into tenants (name, slug)
 values ('Avila Ops Tecnologia', 'avila-ops')
 on conflict (slug) do nothing;

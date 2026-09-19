@@ -6,11 +6,16 @@ export type CrmConversation = {
   contact_phone: string | null
   channel_name: string | null
   channel_phone: string | null
+  channel_provider: string | null
   assigned_user_name: string | null
   last_message_at: string | null
   last_customer_message_at: string | null
   waiting_seconds: number
   unassigned: boolean
+  unread_count: number
+  /** Fim da janela de 24h. `null` quando a regra nao se aplica ao canal. */
+  window_expires_at: string | null
+  window_open: boolean
 }
 
 export type CrmMessage = {
@@ -25,6 +30,24 @@ export type CrmMessage = {
   error_message?: string | null
   request_id?: string | null
   sent_at: string
+  media_id?: string | null
+  media_mime_type?: string | null
+  media_file_name?: string | null
+  media_file_size?: number | null
+  media_status?: 'pending' | 'ready' | 'failed' | string | null
+  media_caption?: string | null
+}
+
+export type CrmTemplate = {
+  id: string
+  channel_id: string | null
+  name: string
+  language: string
+  category: string | null
+  status: string
+  body_text: string | null
+  variable_count: number
+  synced_at: string
 }
 
 export type CrmChannel = {
@@ -98,15 +121,36 @@ export type ConversationFilters = {
   pageSize?: number
 }
 
+/**
+ * Erro da API com o codigo preservado.
+ *
+ * A janela de 24h chega como 409 com `code: 'window_closed'`. Se o cliente so
+ * guardasse a mensagem, a tela teria que adivinhar pelo texto quando trocar o
+ * campo de resposta pelo seletor de templates.
+ */
+export class ApiError extends Error {
+  status: number
+  code?: string
+  details?: Record<string, unknown>
+
+  constructor(message: string, status: number, code?: string, details?: Record<string, unknown>) {
+    super(message)
+    this.name = 'ApiError'
+    this.status = status
+    this.code = code
+    this.details = details
+  }
+}
+
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, { ...init, credentials: 'include' })
   if (response.status === 401) {
     window.location.reload()
-    throw new Error('Sessao expirada.')
+    throw new ApiError('Sessao expirada.', 401)
   }
   if (!response.ok) {
-    const data = await response.json().catch(() => ({}))
-    throw new Error(data.error ?? 'Falha ao carregar dados.')
+    const data = (await response.json().catch(() => ({}))) as { error?: string; code?: string }
+    throw new ApiError(data.error ?? 'Falha ao carregar dados.', response.status, data.code, data)
   }
   return response.json() as Promise<T>
 }
@@ -144,8 +188,51 @@ export function updateUser(userId: string, input: Partial<{ name: string; email:
   })
 }
 
+export type ConversationsPage = {
+  conversations: CrmConversation[]
+  pagination: { page: number; pageSize: number; total: number }
+  unread: { messages: number; conversations: number }
+}
+
 export function listConversations(filters?: ConversationFilters) {
-  return api<{ conversations: CrmConversation[]; pagination: { page: number; pageSize: number; total: number } }>(`/api/conversations${toQuery(filters)}`)
+  return api<ConversationsPage>(`/api/conversations${toQuery(filters)}`)
+}
+
+/** Zera o nao lido. Separado da leitura das mensagens de proposito. */
+export function markConversationRead(conversationId: string) {
+  return api<{ ok: boolean }>(`/api/conversations/${conversationId}/read`, { method: 'POST' })
+}
+
+export function mediaContentUrl(mediaId: string) {
+  return `/api/media/${mediaId}/content`
+}
+
+export async function sendConversationMedia(conversationId: string, file: File, caption?: string) {
+  const form = new FormData()
+  if (caption) form.set('caption', caption)
+  // O arquivo vai por ultimo: o backend le os campos que vieram antes dele no
+  // fluxo multipart, e uma legenda depois do binario chegaria vazia.
+  form.set('file', file, file.name)
+  return api<{ message: CrmMessage; requestId: string }>(`/api/conversations/${conversationId}/media`, {
+    method: 'POST',
+    body: form,
+  })
+}
+
+export function listWhatsAppTemplates(onlyApproved = true) {
+  return api<{ templates: CrmTemplate[] }>(`/api/whatsapp/templates?onlyApproved=${onlyApproved}`)
+}
+
+export function syncWhatsAppTemplates() {
+  return api<{ created: number; updated: number; total: number; errors: string[] }>('/api/whatsapp/templates/sync', { method: 'POST' })
+}
+
+export function sendConversationTemplate(conversationId: string, templateId: string, variables: string[]) {
+  return api<{ message: CrmMessage; requestId: string }>(`/api/conversations/${conversationId}/template`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ templateId, variables, idempotencyKey: crypto.randomUUID() }),
+  })
 }
 
 export function listConversationMessages(conversationId: string) {

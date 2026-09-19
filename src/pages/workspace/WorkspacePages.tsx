@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react'
-import { Archive, CheckCircle2, Clock, MessageCircle, MoreHorizontal, Plus, Search, Trash2, X } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { Archive, CheckCircle2, Clock, FileText, MessageCircle, MoreHorizontal, Paperclip, Plus, RefreshCw, Search, Trash2, X } from 'lucide-react'
 import type { LeadSource } from '../../components/modals/LeadSourceModal'
 import {
+  ApiError,
   archiveConversation,
   assignConversation,
   bootstrap,
@@ -18,7 +19,13 @@ import {
   listConversations,
   listLeads,
   listTasks,
+  listWhatsAppTemplates,
+  markConversationRead,
+  mediaContentUrl,
+  sendConversationMedia,
   sendConversationMessage,
+  sendConversationTemplate,
+  syncWhatsAppTemplates,
   updateLeadStage,
   updateTask,
   type ConversationFilters,
@@ -29,9 +36,11 @@ import {
   type CrmLead,
   type CrmMessage,
   type CrmTask,
+  type CrmTemplate,
   type CrmUser,
   type PipelineStage,
 } from '../../lib/crm'
+import { useRealtime } from '../../lib/realtime'
 import type { Page } from '../../types'
 
 function Workspace({ page, setPage, openLeadSource }: { page: Page; setPage: (page: Page) => void; openLeadSource: (source: LeadSource) => void }) {
@@ -137,11 +146,27 @@ function ChatInbox({ openLeadSource }: { openLeadSource: (source: LeadSource) =>
   const [users, setUsers] = useState<CrmUser[]>([])
   const [filters, setFilters] = useState<ConversationFilters>({ page: 1, pageSize: 30 })
   const [total, setTotal] = useState(0)
+  const [unreadTotal, setUnreadTotal] = useState(0)
   const [reply, setReply] = useState('')
   const [sending, setSending] = useState(false)
+  const [uploading, setUploading] = useState(false)
   const [creatingLead, setCreatingLead] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [templates, setTemplates] = useState<CrmTemplate[]>([])
+  const [templateOpen, setTemplateOpen] = useState(false)
+  const [syncingTemplates, setSyncingTemplates] = useState(false)
+  // Avanca o relogio para o contador da janela andar sozinho; sem isso o
+  // "faltam 3h" congela ate a proxima interacao do atendente.
+  const [now, setNow] = useState(() => Date.now())
+  const fileInput = useRef<HTMLInputElement>(null)
+  const messagesEnd = useRef<HTMLDivElement>(null)
+  // Espelhos para os callbacks do SSE: eles sao recriados a cada render, mas
+  // executam com o estado do instante em que o evento chega.
+  const selectedIdRef = useRef<string | null>(null)
+  selectedIdRef.current = selectedId
+  const conversationsRef = useRef<CrmConversation[]>([])
+  const refreshTimer = useRef<number | null>(null)
 
   const refresh = (nextFilters = filters) => {
     setLoading(true)
@@ -149,6 +174,7 @@ function ChatInbox({ openLeadSource }: { openLeadSource: (source: LeadSource) =>
       .then((data) => {
         setConversations(data.conversations)
         setTotal(data.pagination.total)
+        setUnreadTotal(data.unread?.messages ?? 0)
         setSelectedId((current) => current && data.conversations.some((item) => item.id === current) ? current : data.conversations[0]?.id ?? null)
         setError('')
       })
@@ -163,6 +189,7 @@ function ChatInbox({ openLeadSource }: { openLeadSource: (source: LeadSource) =>
         if (!active) return
         setConversations(data.conversations)
         setTotal(data.pagination.total)
+        setUnreadTotal(data.unread?.messages ?? 0)
         setChannels(channelData.channels)
         setUsers(boot.users)
         setSelectedId(data.conversations[0]?.id ?? null)
@@ -180,11 +207,20 @@ function ChatInbox({ openLeadSource }: { openLeadSource: (source: LeadSource) =>
   }, [filters])
 
   useEffect(() => {
+    const tick = window.setInterval(() => setNow(Date.now()), 30_000)
+    return () => {
+      window.clearInterval(tick)
+      if (refreshTimer.current !== null) window.clearTimeout(refreshTimer.current)
+    }
+  }, [])
+
+  useEffect(() => {
     if (!selectedId) {
       setMessages([])
       return
     }
     let active = true
+    setTemplateOpen(false)
     listConversationMessages(selectedId)
       .then((data) => active && setMessages(data.messages))
       .catch((err: Error) => active && setError(err.message))
@@ -193,14 +229,154 @@ function ChatInbox({ openLeadSource }: { openLeadSource: (source: LeadSource) =>
     }
   }, [selectedId])
 
+  useEffect(() => {
+    messagesEnd.current?.scrollIntoView({ block: 'end' })
+  }, [messages])
+
+  /** Aplica no estado o que o servidor acabou de empurrar. */
+  const { connected } = useRealtime((event) => {
+    if (event.type === 'conversation.read') {
+      patchConversation(event.conversationId, { unread_count: 0 })
+      return
+    }
+
+    if (event.type === 'conversation.updated') {
+      const data = (event.data ?? {}) as Partial<CrmConversation>
+      // Uma conversa que ainda nao esta na pagina atual so entra pela
+      // listagem: ela pode estar fora do filtro ou da pagina em foco.
+      setConversations((items) =>
+        items.some((item) => item.id === event.conversationId)
+          ? items.map((item) => (item.id === event.conversationId ? { ...item, ...data } : item))
+          : items,
+      )
+      // Conversa fora da pagina atual: so a listagem sabe se ela entra no
+      // filtro. O agendamento evita uma busca por evento quando a fila esta
+      // movimentada e a maior parte dos eventos e de conversas nao exibidas.
+      if (!conversationsRef.current.some((item) => item.id === event.conversationId)) scheduleRefresh()
+      return
+    }
+
+    if (event.type === 'message.updated') {
+      const data = (event.data ?? {}) as Partial<CrmMessage> & { id?: string }
+      const conversationId = event.conversationId
+      if (!data.id || !conversationId || conversationId !== selectedIdRef.current) return
+      if (event.truncated) {
+        // O evento nao coube no transporte: busca o estado real em vez de
+        // mostrar um pedaco da mensagem.
+        listConversationMessages(conversationId).then((fresh) => setMessages(fresh.messages)).catch(() => {})
+        return
+      }
+      setMessages((items) => items.map((item) => (item.id === data.id ? { ...item, ...data } : item)))
+      return
+    }
+
+    if (event.type === 'message.created') {
+      const conversationId = event.conversationId
+      if (!conversationId) return
+      const message = (event.data ?? null) as CrmMessage | null
+
+      if (conversationId === selectedIdRef.current) {
+        if (event.truncated || !message) {
+          listConversationMessages(conversationId).then((fresh) => setMessages(fresh.messages)).catch(() => {})
+        } else {
+          // Dedupe por id: quem enviou ja inseriu a mensagem na resposta do
+          // POST e recebe o mesmo evento de volta pelo SSE.
+          setMessages((items) => (items.some((item) => item.id === message.id) ? items : [...items, message]))
+        }
+        if (message?.direction === 'inbound') {
+          markConversationRead(conversationId).catch(() => {})
+          patchConversation(conversationId, { unread_count: 0 })
+        }
+      }
+
+      bumpConversation(conversationId, message)
+    }
+  })
+
+  conversationsRef.current = conversations
+
+  /** Junta varios eventos seguidos numa unica releitura da lista. */
+  function scheduleRefresh() {
+    if (refreshTimer.current !== null) return
+    refreshTimer.current = window.setTimeout(() => {
+      refreshTimer.current = null
+      refresh(filters)
+    }, 2_000)
+  }
+
+  function patchConversation(conversationId: string | null | undefined, patch: Partial<CrmConversation>) {
+    if (!conversationId) return
+    setConversations((items) => items.map((item) => (item.id === conversationId ? { ...item, ...patch } : item)))
+  }
+
+  /** Move a conversa para o topo e atualiza o resumo da lista. */
+  function bumpConversation(conversationId: string, message: CrmMessage | null) {
+    setConversations((items) => {
+      const index = items.findIndex((item) => item.id === conversationId)
+      if (index === -1) return items
+      const current = items[index]
+      const isInbound = message?.direction === 'inbound'
+      const updated: CrmConversation = {
+        ...current,
+        last_message_at: message?.sent_at ?? current.last_message_at,
+        status: isInbound ? 'waiting' : current.status === 'waiting' ? 'open' : current.status,
+        last_customer_message_at: isInbound ? message?.sent_at ?? current.last_customer_message_at : current.last_customer_message_at,
+        window_open: isInbound ? true : current.window_open,
+        window_expires_at: isInbound && message?.sent_at
+          ? new Date(new Date(message.sent_at).getTime() + 24 * 60 * 60 * 1000).toISOString()
+          : current.window_expires_at,
+        unread_count: isInbound && conversationId !== selectedIdRef.current ? current.unread_count + 1 : current.unread_count,
+      }
+      if (isInbound && conversationId !== selectedIdRef.current) setUnreadTotal((value) => value + 1)
+      // A lista vem ordenada por ultima mensagem: quem acabou de falar sobe.
+      return [updated, ...items.filter((_, position) => position !== index)]
+    })
+  }
+
+  function handleSelect(conversationId: string) {
+    setSelectedId(conversationId)
+    const conversation = conversations.find((item) => item.id === conversationId)
+    if (!conversation || conversation.unread_count === 0) return
+    setUnreadTotal((value) => Math.max(0, value - conversation.unread_count))
+    patchConversation(conversationId, { unread_count: 0 })
+    markConversationRead(conversationId).catch(() => {})
+  }
+
   const selected = conversations.find((conversation) => conversation.id === selectedId) ?? null
   const waitingCount = conversations.filter((conversation) => conversation.status === 'waiting').length
   const selectedAssignee = selected?.assigned_user_id ?? ''
+  const windowState = describeWindow(selected, now)
 
   async function handleAssign(userId: string) {
     if (!selected) return
     await assignConversation(selected.id, userId || null)
     refresh()
+  }
+
+  async function loadTemplates() {
+    setTemplateOpen(true)
+    if (templates.length > 0) return
+    try {
+      const data = await listWhatsAppTemplates(true)
+      setTemplates(data.templates)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  async function handleSyncTemplates() {
+    setSyncingTemplates(true)
+    setError('')
+    try {
+      const result = await syncWhatsAppTemplates()
+      const data = await listWhatsAppTemplates(true)
+      setTemplates(data.templates)
+      setError(`${result.total} template(s) sincronizado(s) com a Meta.`)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setSyncingTemplates(false)
+    }
   }
 
   async function handleSend() {
@@ -209,9 +385,53 @@ function ChatInbox({ openLeadSource }: { openLeadSource: (source: LeadSource) =>
     setError('')
     try {
       const result = await sendConversationMessage(selected.id, reply.trim())
-      setMessages((items) => [...items, result.message])
+      setMessages((items) => (items.some((item) => item.id === result.message.id) ? items : [...items, result.message]))
       setReply('')
-      refresh()
+    } catch (err) {
+      // 409 com `window_closed`: a Meta nao aceita texto livre depois de 24h.
+      // Em vez de so mostrar o erro, a tela ja abre o caminho que funciona.
+      if (err instanceof ApiError && err.code === 'window_closed') {
+        patchConversation(selected.id, { window_open: false })
+        setError(err.message)
+        await loadTemplates()
+      } else {
+        setError(err instanceof Error ? err.message : String(err))
+      }
+    } finally {
+      setSending(false)
+    }
+  }
+
+  async function handleAttach(file: File | undefined) {
+    if (!selected || !file) return
+    setUploading(true)
+    setError('')
+    try {
+      const result = await sendConversationMedia(selected.id, file, reply.trim() || undefined)
+      setMessages((items) => (items.some((item) => item.id === result.message.id) ? items : [...items, result.message]))
+      setReply('')
+    } catch (err) {
+      if (err instanceof ApiError && err.code === 'window_closed') {
+        patchConversation(selected.id, { window_open: false })
+        setError(err.message)
+        await loadTemplates()
+      } else {
+        setError(err instanceof Error ? err.message : String(err))
+      }
+    } finally {
+      setUploading(false)
+      if (fileInput.current) fileInput.current.value = ''
+    }
+  }
+
+  async function handleSendTemplate(template: CrmTemplate, variables: string[]) {
+    if (!selected) return
+    setSending(true)
+    setError('')
+    try {
+      const result = await sendConversationTemplate(selected.id, template.id, variables)
+      setMessages((items) => (items.some((item) => item.id === result.message.id) ? items : [...items, result.message]))
+      setTemplateOpen(false)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -241,7 +461,14 @@ function ChatInbox({ openLeadSource }: { openLeadSource: (source: LeadSource) =>
           <div className="space-y-3 border-b border-slate-200 p-4">
             <span className="rounded bg-lime-100 px-2 py-1 text-xs text-lime-700">Conversas abertas</span>
             <span className="float-right text-xs text-slate-400">Total: {total}</span>
-            {waitingCount > 0 && <p className="mt-2 text-xs font-semibold text-amber-600">{waitingCount} cliente(s) aguardando resposta</p>}
+            <div className="flex items-center gap-3 text-xs">
+              <span className={`inline-flex items-center gap-1.5 ${connected ? 'text-emerald-600' : 'text-slate-400'}`} title={connected ? 'Recebendo mensagens em tempo real' : 'Reconectando ao fluxo em tempo real'}>
+                <span className={`h-2 w-2 rounded-full ${connected ? 'bg-emerald-500' : 'bg-slate-300'}`} />
+                {connected ? 'Ao vivo' : 'Reconectando'}
+              </span>
+              {unreadTotal > 0 && <span className="font-semibold text-blue-600">{unreadTotal} não lida(s)</span>}
+            </div>
+            {waitingCount > 0 && <p className="text-xs font-semibold text-amber-600">{waitingCount} cliente(s) aguardando resposta</p>}
             <input
               className="w-full rounded border border-slate-200 px-3 py-2 text-sm outline-none"
               placeholder="Buscar contato, telefone, empresa, mensagem..."
@@ -291,15 +518,22 @@ function ChatInbox({ openLeadSource }: { openLeadSource: (source: LeadSource) =>
               <button
                 key={conversation.id}
                 className={`block w-full p-4 text-left ${conversation.id === selectedId ? 'bg-blue-50' : 'hover:bg-slate-50'}`}
-                onClick={() => setSelectedId(conversation.id)}
+                onClick={() => handleSelect(conversation.id)}
               >
                 <div className="flex items-start gap-3">
-                  <div className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-slate-200 text-xs font-bold">
-                    {(conversation.contact_name ?? conversation.contact_phone ?? '?').slice(0, 2).toUpperCase()}
+                  <div className="relative shrink-0">
+                    <div className="grid h-10 w-10 place-items-center rounded-full bg-slate-200 text-xs font-bold">
+                      {(conversation.contact_name ?? conversation.contact_phone ?? '?').slice(0, 2).toUpperCase()}
+                    </div>
+                    {conversation.unread_count > 0 && (
+                      <span className="absolute -right-1 -top-1 grid h-5 min-w-5 place-items-center rounded-full bg-blue-600 px-1 text-[10px] font-bold text-white">
+                        {conversation.unread_count > 99 ? '99+' : conversation.unread_count}
+                      </span>
+                    )}
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center justify-between gap-2">
-                      <p className="truncate font-semibold">{conversation.contact_name ?? conversation.contact_phone ?? 'Contato sem nome'}</p>
+                      <p className={`truncate ${conversation.unread_count > 0 ? 'font-bold' : 'font-semibold'}`}>{conversation.contact_name ?? conversation.contact_phone ?? 'Contato sem nome'}</p>
                       <StatusPill status={conversation.status} />
                     </div>
                     <p className="truncate text-sm text-slate-500">{conversation.channel_name ?? 'WhatsApp'} {conversation.channel_phone ? `- ${conversation.channel_phone}` : ''}</p>
@@ -334,13 +568,19 @@ function ChatInbox({ openLeadSource }: { openLeadSource: (source: LeadSource) =>
                   <p className="text-xs text-slate-500">{selected.channel_name ?? 'WhatsApp'} · {selected.status}</p>
                 </div>
                 <div className="flex items-center gap-2">
+                  {windowState.label && (
+                    <span className={`inline-flex items-center gap-1.5 rounded px-2.5 py-1.5 text-xs font-semibold ${windowState.tone}`} title={windowState.hint}>
+                      <Clock size={13} />
+                      {windowState.label}
+                    </span>
+                  )}
                   <select className="rounded border border-slate-200 px-3 py-2 text-sm" value={selectedAssignee} onChange={(event) => handleAssign(event.target.value)}>
                     <option value="">Sem responsável</option>
                     {users.map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}
                   </select>
                   <button
                     className="inline-flex items-center gap-2 rounded border border-slate-200 px-3 py-2 text-sm font-semibold"
-                    onClick={() => archiveConversation(selected.id).then(() => setConversations((items) => items.map((item) => item.id === selected.id ? { ...item, status: 'archived' } : item)))}
+                    onClick={() => archiveConversation(selected.id).then(() => patchConversation(selected.id, { status: 'archived' }))}
                   >
                     <Archive size={15} />
                     Arquivar
@@ -353,29 +593,246 @@ function ChatInbox({ openLeadSource }: { openLeadSource: (source: LeadSource) =>
               <div className="flex-1 space-y-3 overflow-auto p-5">
                 {messages.length === 0 && <p className="mt-12 text-center text-sm text-slate-400">Nenhuma mensagem gravada para esta conversa.</p>}
                 {messages.map((message) => (
-                  <div key={message.id} className={`flex ${message.direction === 'inbound' ? 'justify-start' : 'justify-end'}`}>
-                    <div className={`max-w-[72%] rounded px-4 py-3 text-sm shadow-sm ${message.direction === 'inbound' ? 'bg-white' : 'bg-blue-600 text-white'}`}>
-                      <p>{message.body}</p>
-                      <p className={`mt-2 text-xs ${message.direction === 'inbound' ? 'text-slate-400' : 'text-blue-100'}`}>
-                        {new Date(message.sent_at).toLocaleString('pt-BR')} · {message.status}
-                      </p>
-                      {message.error_message && <p className="mt-1 text-xs text-red-500">{message.error_message}</p>}
-                    </div>
-                  </div>
+                  <MessageBubble key={message.id} message={message} />
                 ))}
+                <div ref={messagesEnd} />
               </div>
               <div className="border-t border-slate-200 bg-white p-4">
-                <textarea className="h-20 w-full resize-none rounded border border-slate-200 p-3 text-sm outline-none" value={reply} onChange={(event) => setReply(event.target.value)} placeholder="Responder pelo WhatsApp..." />
-                <div className="mt-2 flex justify-end">
-                  <button className="rounded bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60" disabled={sending || !reply.trim()} onClick={handleSend}>
-                    {sending ? 'Enviando...' : 'Enviar resposta'}
-                  </button>
-                </div>
+                {templateOpen || !windowState.canSendFreeText ? (
+                  <TemplateComposer
+                    templates={templates}
+                    sending={sending}
+                    syncing={syncingTemplates}
+                    blocked={!windowState.canSendFreeText}
+                    onSync={handleSyncTemplates}
+                    onSend={handleSendTemplate}
+                    onClose={windowState.canSendFreeText ? () => setTemplateOpen(false) : undefined}
+                  />
+                ) : (
+                  <>
+                    <textarea className="h-20 w-full resize-none rounded border border-slate-200 p-3 text-sm outline-none" value={reply} onChange={(event) => setReply(event.target.value)} placeholder="Responder pelo WhatsApp..." />
+                    <div className="mt-2 flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <input
+                          ref={fileInput}
+                          type="file"
+                          className="hidden"
+                          onChange={(event) => handleAttach(event.target.files?.[0])}
+                        />
+                        <button
+                          className="inline-flex items-center gap-2 rounded border border-slate-200 px-3 py-2 text-sm font-semibold disabled:opacity-60"
+                          disabled={uploading || selected.channel_provider !== 'whatsapp'}
+                          title={selected.channel_provider !== 'whatsapp' ? 'Anexos disponíveis apenas na API oficial do WhatsApp' : 'Anexar arquivo'}
+                          onClick={() => fileInput.current?.click()}
+                        >
+                          <Paperclip size={15} />
+                          {uploading ? 'Enviando anexo...' : 'Anexar'}
+                        </button>
+                        {selected.channel_provider === 'whatsapp' && (
+                          <button className="inline-flex items-center gap-2 rounded border border-slate-200 px-3 py-2 text-sm font-semibold" onClick={loadTemplates}>
+                            <FileText size={15} />
+                            Template
+                          </button>
+                        )}
+                      </div>
+                      <button className="rounded bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60" disabled={sending || !reply.trim()} onClick={handleSend}>
+                        {sending ? 'Enviando...' : 'Enviar resposta'}
+                      </button>
+                    </div>
+                  </>
+                )}
               </div>
             </div>
           )}
         </section>
       </div>
+    </div>
+  )
+}
+
+/**
+ * Traduz a janela de 24h para o que a tela precisa decidir.
+ *
+ * O backend ja recusa o texto livre fora da janela; aqui a conta serve para
+ * avisar antes de o atendente escrever, nao para autorizar o envio.
+ */
+function describeWindow(conversation: CrmConversation | null, now: number) {
+  if (!conversation || conversation.channel_provider !== 'whatsapp') {
+    return { canSendFreeText: true, label: '', tone: '', hint: '' }
+  }
+  if (!conversation.window_expires_at) {
+    return {
+      canSendFreeText: false,
+      label: 'Sem janela aberta',
+      tone: 'bg-slate-100 text-slate-600',
+      hint: 'O cliente ainda não escreveu. Só um template aprovado inicia a conversa.',
+    }
+  }
+  const remaining = Math.floor((new Date(conversation.window_expires_at).getTime() - now) / 1000)
+  if (remaining <= 0) {
+    return {
+      canSendFreeText: false,
+      label: 'Janela fechada',
+      tone: 'bg-red-100 text-red-700',
+      hint: 'Passaram-se 24h da última mensagem do cliente. Use um template aprovado.',
+    }
+  }
+  const hours = Math.floor(remaining / 3600)
+  const minutes = Math.floor((remaining % 3600) / 60)
+  return {
+    canSendFreeText: true,
+    label: hours > 0 ? `Janela: ${hours}h${minutes > 0 ? ` ${minutes}min` : ''}` : `Janela: ${minutes}min`,
+    tone: hours < 2 ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700',
+    hint: 'Tempo restante para responder com texto livre pela API oficial.',
+  }
+}
+
+function MessageBubble({ message }: { message: CrmMessage }) {
+  const inbound = message.direction === 'inbound'
+  // Mensagem com anexo entra no banco com o marcador "[image]" vindo do
+  // webhook; ao lado da imagem ele nao informa nada. A legenda real do cliente
+  // vive no anexo.
+  const marcador = /^\[[a-z_]+\]$/i.test(message.body ?? '')
+  const texto = message.media_id && marcador ? message.media_caption ?? '' : message.body ?? ''
+  return (
+    <div className={`flex ${inbound ? 'justify-start' : 'justify-end'}`}>
+      <div className={`max-w-[72%] rounded px-4 py-3 text-sm shadow-sm ${inbound ? 'bg-white' : 'bg-blue-600 text-white'}`}>
+        {message.media_id && <MessageAttachment message={message} />}
+        {texto && <p className={message.media_id ? 'mt-2 whitespace-pre-wrap' : 'whitespace-pre-wrap'}>{texto}</p>}
+        {!texto && !message.media_id && <p className="italic opacity-70">[sem conteúdo]</p>}
+        <p className={`mt-2 text-xs ${inbound ? 'text-slate-400' : 'text-blue-100'}`}>
+          {new Date(message.sent_at).toLocaleString('pt-BR')} · {message.message_type === 'template' ? 'template · ' : ''}{message.status}
+        </p>
+        {message.error_message && <p className="mt-1 text-xs text-red-500">{message.error_message}</p>}
+      </div>
+    </div>
+  )
+}
+
+/** Renderiza o anexo pelo mime: imagem, áudio e vídeo abrem no lugar. */
+function MessageAttachment({ message }: { message: CrmMessage }) {
+  if (message.media_status === 'pending') {
+    return <p className="rounded bg-black/5 px-3 py-2 text-xs italic">Baixando anexo...</p>
+  }
+  if (message.media_status === 'failed' || !message.media_id) {
+    return <p className="rounded bg-black/5 px-3 py-2 text-xs italic">Anexo indisponível.</p>
+  }
+
+  const url = mediaContentUrl(message.media_id)
+  const mime = message.media_mime_type ?? ''
+
+  if (mime.startsWith('image/')) {
+    return <a href={url} target="_blank" rel="noreferrer"><img src={url} alt={message.media_file_name ?? 'Anexo'} className="max-h-72 rounded" /></a>
+  }
+  if (mime.startsWith('audio/')) {
+    return <audio controls src={url} className="w-64" />
+  }
+  if (mime.startsWith('video/')) {
+    return <video controls src={url} className="max-h-72 rounded" />
+  }
+  return (
+    <a href={url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded bg-black/10 px-3 py-2 text-xs font-semibold underline">
+      <FileText size={14} />
+      {message.media_file_name ?? 'Baixar anexo'}
+    </a>
+  )
+}
+
+/**
+ * Seletor de templates.
+ *
+ * Aparece sozinho quando a janela fecha: naquele momento e a unica forma de
+ * falar com o cliente, e esconder isso atras de um menu custaria o contato.
+ */
+function TemplateComposer({
+  templates,
+  sending,
+  syncing,
+  blocked,
+  onSync,
+  onSend,
+  onClose,
+}: {
+  templates: CrmTemplate[]
+  sending: boolean
+  syncing: boolean
+  blocked: boolean
+  onSync: () => void
+  onSend: (template: CrmTemplate, variables: string[]) => void
+  onClose?: () => void
+}) {
+  const [templateId, setTemplateId] = useState('')
+  const [variables, setVariables] = useState<string[]>([])
+  const chosen = templates.find((template) => template.id === templateId) ?? null
+
+  function pick(id: string) {
+    setTemplateId(id)
+    const template = templates.find((item) => item.id === id)
+    setVariables(Array.from({ length: template?.variable_count ?? 0 }, () => ''))
+  }
+
+  const ready = Boolean(chosen) && variables.every((value) => value.trim().length > 0)
+  const preview = chosen?.body_text?.replace(/\{\{\s*(\d+)\s*\}\}/g, (_match, index: string) => variables[Number(index) - 1] || `{{${index}}}`)
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between gap-2">
+        <p className={`text-xs font-semibold ${blocked ? 'text-amber-700' : 'text-slate-600'}`}>
+          {blocked ? 'Fora da janela de 24h: só um template aprovado chega ao cliente.' : 'Enviar um template aprovado'}
+        </p>
+        <div className="flex items-center gap-2">
+          <button className="inline-flex items-center gap-1.5 rounded border border-slate-200 px-2.5 py-1.5 text-xs font-semibold disabled:opacity-60" disabled={syncing} onClick={onSync}>
+            <RefreshCw size={13} />
+            {syncing ? 'Sincronizando...' : 'Sincronizar'}
+          </button>
+          {onClose && (
+            <button className="rounded border border-slate-200 px-2.5 py-1.5 text-xs font-semibold" onClick={onClose}>
+              <X size={13} />
+            </button>
+          )}
+        </div>
+      </div>
+
+      {templates.length === 0 ? (
+        <p className="rounded border border-dashed border-slate-300 p-4 text-center text-xs text-slate-500">
+          Nenhum template aprovado sincronizado. Use "Sincronizar" para buscar os templates da sua conta na Meta.
+        </p>
+      ) : (
+        <>
+          <select className="w-full rounded border border-slate-200 px-3 py-2 text-sm" value={templateId} onChange={(event) => pick(event.target.value)}>
+            <option value="">Escolha um template...</option>
+            {templates.map((template) => (
+              <option key={template.id} value={template.id}>{template.name} ({template.language}){template.category ? ` · ${template.category}` : ''}</option>
+            ))}
+          </select>
+
+          {chosen && variables.length > 0 && (
+            <div className="grid gap-2">
+              {variables.map((value, index) => (
+                <input
+                  key={index}
+                  className="w-full rounded border border-slate-200 px-3 py-2 text-sm"
+                  placeholder={`Variável {{${index + 1}}}`}
+                  value={value}
+                  onChange={(event) => setVariables((current) => current.map((item, position) => (position === index ? event.target.value : item)))}
+                />
+              ))}
+            </div>
+          )}
+
+          {chosen && <p className="rounded bg-slate-50 p-3 text-sm text-slate-700 whitespace-pre-wrap">{preview}</p>}
+
+          <div className="flex justify-end">
+            <button
+              className="rounded bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
+              disabled={!ready || sending}
+              onClick={() => chosen && onSend(chosen, variables)}
+            >
+              {sending ? 'Enviando...' : 'Enviar template'}
+            </button>
+          </div>
+        </>
+      )}
     </div>
   )
 }

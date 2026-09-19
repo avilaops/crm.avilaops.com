@@ -55,6 +55,12 @@ O Agenda já possui uma fundação válida:
 - registro inicial de eventos e `request_id`;
 - Docker, PostgreSQL, healthcheck, scripts de backup/restore e manual operacional.
 
+- inbox em tempo real por SSE com distribuicao via `LISTEN/NOTIFY` do Postgres;
+- contador de nao lidos por conversa e total do workspace;
+- midia do WhatsApp nos dois sentidos, guardada em volume e servida com sessao;
+- templates aprovados sincronizados da WABA e envio com variaveis;
+- janela de atendimento de 24 horas imposta no backend e exibida no inbox.
+
 Esses recursos ainda precisam de evolução nos pontos indicados abaixo, mas não partem do zero.
 
 ## 4. Diagnóstico executivo
