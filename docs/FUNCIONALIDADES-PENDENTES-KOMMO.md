@@ -379,16 +379,20 @@ O que muda na prática: o trabalho deixa de ser "implementar a Cloud API" e pass
 
 #### 6.9.2 Consumir a Messageria
 
-- [ ] Definir a credencial do CRM na Messageria (chave de API por conta, não token da Meta).
-- [ ] Guardar essa credencial cifrada em `integrations`, no mesmo padrão de `mail` e `ai`.
-- [ ] Enviar mensagem pela API da Messageria (`canal: "whatsapp"`), sem falar com a Graph API.
-- [ ] Receber mensagem e status por webhook **da Messageria** para o CRM, com assinatura validada.
-- [ ] Gravar entrada e saída em `messages`, com `external_id` para idempotência.
-- [ ] Refletir os estados de entrega que a Messageria já apura.
-- [ ] Espelhar a janela de 24h que a Messageria controla; não recalcular.
-- [ ] Listar os modelos aprovados vindos da Messageria; não sincronizar com a Meta direto.
-- [ ] Exibir de qual número a mensagem saiu, separando produção de número de teste.
-- [ ] Tratar erro de canal (número não verificado, sem modelo, fora da janela) com mensagem que a pessoa entenda.
+Implementado; falta a prova em produção. O como está em
+[INTEGRACAO-MESSAGERIA.md](INTEGRACAO-MESSAGERIA.md).
+
+- [x] Definir a credencial do CRM na Messageria (chave de API por conta, não token da Meta).
+- [x] Guardar essa credencial cifrada em `integrations`, no mesmo padrão de `mail` e `ai`.
+- [x] Enviar mensagem pela API da Messageria (`canal: "whatsapp"`), sem falar com a Graph API.
+- [x] Receber mensagem e status por webhook **da Messageria** para o CRM, com assinatura validada.
+- [x] Gravar entrada e saída em `messages`, com `external_id` para idempotência.
+- [x] Refletir os estados de entrega que a Messageria já apura.
+- [x] Espelhar a janela de 24h que a Messageria controla; não recalcular.
+- [x] Listar os modelos aprovados vindos da Messageria; não sincronizar com a Meta direto.
+- [x] Exibir de qual número a mensagem saiu, separando produção de número de teste.
+- [x] Tratar erro de canal (número não verificado, sem modelo, fora da janela) com mensagem que a pessoa entenda.
+- [ ] **Mídia pela Messageria.** O `POST /api/v1/mensagens` de lá aceita texto, modelo e produto do catálogo; imagem, documento e áudio não existem. Enquanto não existirem, `whatsapp-media.ts` segue falando com a Graph — é a última coisa neste repositório que faz isso.
 
 #### 6.9.3 A jornada comercial, que é o que fica no CRM
 

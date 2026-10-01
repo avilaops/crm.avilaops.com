@@ -14,6 +14,7 @@ import { ehMensagemDeAudio, transcreverEGravar } from "./transcricao.js";
 import { publishRealtime, publishRealtimeAsync, registerRealtimeRoutes, startRealtime } from "./realtime.js";
 import { ingestInboundMedia, maxMediaBytes, registerWhatsAppMediaRoutes, WHATSAPP_MEDIA_TYPES } from "./whatsapp-media.js";
 import { assertSendWindow, registerWhatsAppTemplateRoutes, WINDOW_SELECT_SQL } from "./whatsapp-templates.js";
+import { enviar as enviarPelaMessageria, getConnection as conexaoMessageria, MessageriaRequestError, registerMessageriaRoutes } from "./messageria.js";
 import { registerMailRoutes } from "./routes-mail.js";
 import { startAutomation } from "./automation.js";
 import { registerAiRoutes } from "./routes-ai.js";
@@ -1270,7 +1271,28 @@ async function main() {
     let errorMessage: string | null = null;
     let responseMetadata: Record<string, unknown> = {};
 
-    if (row.channel_provider === "qrcode" || row.channel_provider === "evolution") {
+    if (row.channel_provider === "messageria") {
+      // O canal veio espelhado da Messageria: quem fala com a Meta e ela, que
+      // ja confere janela, opt-out e franquia antes de deixar sair.
+      const messageria = await conexaoMessageria(user.tenant_id, decryptSecret);
+      if (!messageria?.api_key) return reply.code(400).send({ error: "Messageria nao conectada." });
+      try {
+        const saida = await enviarPelaMessageria(messageria, {
+          para: row.contact_phone,
+          texto: body.body,
+          idempotencia: idempotencyKey,
+        });
+        externalId = saida.externalId;
+        status = saida.status ?? "sent";
+        responseMetadata = { messageria: saida };
+      } catch (erro) {
+        if (!(erro instanceof MessageriaRequestError)) throw erro;
+        status = "failed";
+        errorMessage = erro.message;
+        responseMetadata = { messageria: { codigo: erro.codigo } };
+        await recordEvent(user.tenant_id, "message", "messageria.message_send_failed", { conversation_id: id, error: erro.message, codigo: erro.codigo }, user.id, null, requestId);
+      }
+    } else if (row.channel_provider === "qrcode" || row.channel_provider === "evolution") {
       const evolutionApiUrl = process.env.EVOLUTION_API_URL ?? "http://localhost:8080";
       const evolutionApiKey = process.env.EVOLUTION_API_KEY ?? "global-apikey";
       try {
@@ -2613,6 +2635,17 @@ async function main() {
     getMetaIntegration,
     graphVersion: META_GRAPH_VERSION,
     touchConversationAfterSend,
+    decryptSecret,
+  });
+  registerMessageriaRoutes(app, {
+    requireAuth,
+    canManage,
+    recordEvent,
+    encryptSecret,
+    decryptSecret,
+    upsertContato: upsertWhatsAppContact,
+    obterConversa: getOrCreateConversation,
+    publicar: publishRealtimeAsync,
   });
   await startRealtime({ log: (mensagem, detalhe) => app.log.info({ detalhe }, mensagem) });
 

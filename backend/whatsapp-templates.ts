@@ -3,6 +3,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { query } from "./db.js";
 import { publishRealtimeAsync } from "./realtime.js";
+import { enviar as enviarPelaMessageria, getConnection as conexaoMessageria, listarModelos, MessageriaRequestError } from "./messageria.js";
 
 /**
  * Templates aprovados na Meta e a janela de atendimento de 24 horas.
@@ -19,8 +20,18 @@ import { publishRealtimeAsync } from "./realtime.js";
 
 export const WINDOW_HOURS = 24;
 
-/** Canais por QR Code nao passam pela Cloud API e nao tem essa regra. */
+/**
+ * Canais em que a regra da Meta vale.
+ *
+ * `whatsapp` e a Cloud API falada direto daqui; `messageria` e o mesmo numero
+ * falado pela Messageria. A regra e da Meta, nao do caminho — o que muda e
+ * quem calcula a janela, e por isso o carimbo espelhado da Messageria e
+ * gravado em `last_customer_message_at`: a conta abaixo continua sendo uma so.
+ * Canais por QR Code nao passam pela Cloud API e nao tem essa regra.
+ */
+const PROVEDORES_COM_JANELA = ["whatsapp", "messageria"] as const;
 const OFFICIAL_PROVIDER = "whatsapp";
+const LISTA_SQL = PROVEDORES_COM_JANELA.map((p) => `'${p}'`).join(", ");
 
 export type SendWindow = {
   /** `null` quando o canal nao segue a regra (QR Code) ou o cliente nunca escreveu. */
@@ -32,7 +43,7 @@ export type SendWindow = {
 };
 
 export function windowFrom(lastCustomerMessageAt: string | Date | null, provider: string | null): SendWindow {
-  const applies = provider === OFFICIAL_PROVIDER;
+  const applies = PROVEDORES_COM_JANELA.includes((provider ?? "") as (typeof PROVEDORES_COM_JANELA)[number]);
   if (!applies || !lastCustomerMessageAt) {
     return { expiresAt: null, open: !applies, secondsRemaining: 0, applies };
   }
@@ -49,11 +60,11 @@ export function windowFrom(lastCustomerMessageAt: string | Date | null, provider
  * duplicada no frontend: a janela e uma so, e ela nasce aqui.
  */
 export const WINDOW_SELECT_SQL = `
-  case when ch.provider = '${OFFICIAL_PROVIDER}' and c.last_customer_message_at is not null
+  case when ch.provider in (${LISTA_SQL}) and c.last_customer_message_at is not null
        then c.last_customer_message_at + interval '${WINDOW_HOURS} hours'
        else null
   end as window_expires_at,
-  case when ch.provider <> '${OFFICIAL_PROVIDER}' then true
+  case when ch.provider not in (${LISTA_SQL}) then true
        when c.last_customer_message_at is null then false
        else c.last_customer_message_at + interval '${WINDOW_HOURS} hours' > now()
   end as window_open`;
@@ -126,6 +137,7 @@ export type TemplateRouteDeps = {
   getMetaIntegration: (tenantId?: string) => Promise<{ tenantId: string; integration: { access_token: string | null } | null }>;
   graphVersion: string;
   touchConversationAfterSend: (tenantId: string, conversationId: string, status: string) => Promise<void>;
+  decryptSecret: (value: string | null) => string | null;
 };
 
 const sendTemplateSchema = z.object({
@@ -171,6 +183,40 @@ export function registerWhatsAppTemplateRoutes(app: FastifyInstance, deps: Templ
     const user = await deps.requireAuth(request, reply);
     if (!user) return;
     const requestId = (request as FastifyRequest & { requestId?: string }).requestId;
+
+    // Com a Messageria conectada ela e a fonte: puxar da Graph aqui seria o CRM
+    // mantendo infraestrutura Meta propria de novo, que e o que a decisao de
+    // arquitetura tirou. O `whatsapp_templates` vira copia local, para o envio
+    // continuar referenciando um id deste lado.
+    const messageria = await conexaoMessageria(user.tenant_id, deps.decryptSecret);
+    if (messageria?.api_key) {
+      let vindos;
+      try {
+        vindos = (await listarModelos(messageria, messageria.canal_id)).modelos;
+      } catch (erro) {
+        if (erro instanceof MessageriaRequestError) return reply.code(502).send({ error: erro.message, codigo: erro.codigo });
+        throw erro;
+      }
+
+      let criados = 0;
+      let atualizados = 0;
+      for (const modelo of vindos) {
+        const resultado = await query<{ inserted: boolean }>(
+          `insert into whatsapp_templates (tenant_id, waba_id, external_id, name, language, category, status, components, body_text, variable_count, synced_at)
+           values ($1, null, $2, $3, $4, $5, $6, '[]'::jsonb, $7, $8, now())
+           on conflict (tenant_id, name, language)
+           do update set external_id = excluded.external_id, category = excluded.category, status = excluded.status,
+                         body_text = excluded.body_text, variable_count = excluded.variable_count, synced_at = now()
+           returning (xmax = 0) as inserted`,
+          [user.tenant_id, modelo.id, modelo.nome, modelo.idioma, modelo.categoria, modelo.status, modelo.corpo, modelo.variaveis ?? variablesIn(modelo.corpo)],
+        );
+        if (resultado.rows[0]?.inserted) criados += 1;
+        else atualizados += 1;
+      }
+
+      await deps.recordEvent(user.tenant_id, "integration", "messageria.templates_synced", { created: criados, updated: atualizados }, user.id, null, requestId);
+      return { created: criados, updated: atualizados, total: criados + atualizados, errors: [], origem: "messageria" };
+    }
 
     const { integration } = await deps.getMetaIntegration(user.tenant_id);
     if (!integration?.access_token) return reply.code(400).send({ error: "Meta ainda nao conectada." });
@@ -278,12 +324,64 @@ export function registerWhatsAppTemplateRoutes(app: FastifyInstance, deps: Templ
     const row = conversation.rows[0];
     if (!row) return reply.code(404).send({ error: "Conversa nao encontrada." });
     if (!row.channel_external_id || !row.contact_phone) return reply.code(400).send({ error: "Conversa sem canal ou telefone valido." });
-    if (row.channel_provider !== OFFICIAL_PROVIDER) return reply.code(400).send({ error: "Templates existem apenas na API oficial do WhatsApp." });
+    if (!PROVEDORES_COM_JANELA.includes((row.channel_provider ?? "") as (typeof PROVEDORES_COM_JANELA)[number])) {
+      return reply.code(400).send({ error: "Templates existem apenas na API oficial do WhatsApp." });
+    }
+
+    const variables = body.variables.slice(0, chosen.variable_count);
+
+    // Canal da Messageria: quem fala com a Meta e ela, que ja confere janela,
+    // opt-out, modelo aprovado e franquia antes de deixar sair.
+    if (row.channel_provider === "messageria") {
+      const messageria = await conexaoMessageria(user.tenant_id, deps.decryptSecret);
+      if (!messageria?.api_key) return reply.code(400).send({ error: "Messageria nao conectada." });
+
+      let saida: { externalId: string | null; status: string | null };
+      let erroMessageria: string | null = null;
+      try {
+        saida = await enviarPelaMessageria(messageria, {
+          para: row.contact_phone,
+          modelo: chosen.name,
+          idioma: chosen.language,
+          variaveis: variables,
+          idempotencia: idempotencyKey,
+        });
+      } catch (erro) {
+        if (!(erro instanceof MessageriaRequestError)) throw erro;
+        saida = { externalId: null, status: "failed" };
+        erroMessageria = erro.message;
+      }
+
+      const falhou = erroMessageria !== null;
+      const gravada = await query(
+        `insert into messages (tenant_id, conversation_id, external_id, direction, sender_name, body, message_type, metadata, status, idempotency_key, error_message, request_id, sent_at)
+         values ($1, $2, $3, 'outbound', $4, $5, 'template', $6, $7, $8, $9, $10, now())
+         returning id, conversation_id, external_id, direction, sender_name, sender_phone, body, message_type, status, sent_at, created_at, error_message, request_id, media_id`,
+        [
+          user.tenant_id,
+          id,
+          saida.externalId,
+          user.name,
+          renderTemplate(chosen.body_text, variables),
+          JSON.stringify({ messageria: { status: saida.status }, template: { name: chosen.name, language: chosen.language }, variables }),
+          falhou ? "failed" : saida.status ?? "sent",
+          idempotencyKey,
+          erroMessageria,
+          requestId ?? null,
+        ],
+      );
+
+      await deps.touchConversationAfterSend(user.tenant_id, id, falhou ? "failed" : "sent");
+      await deps.recordEvent(user.tenant_id, "message", falhou ? "messageria.template_failed" : "messageria.template_sent", { conversation_id: id, template: chosen.name }, user.id, gravada.rows[0].id, requestId);
+      publishRealtimeAsync({ type: "message.created", tenantId: user.tenant_id, conversationId: id, data: gravada.rows[0] });
+
+      if (falhou) return reply.code(502).send({ error: erroMessageria, message: gravada.rows[0], requestId });
+      return { message: gravada.rows[0], requestId };
+    }
 
     const { integration } = await deps.getMetaIntegration(user.tenant_id);
     if (!integration?.access_token) return reply.code(400).send({ error: "Meta ainda nao conectada." });
 
-    const variables = body.variables.slice(0, chosen.variable_count);
     const components = variables.length > 0
       ? [{ type: "body", parameters: variables.map((value) => ({ type: "text", text: value })) }]
       : [];
