@@ -2,7 +2,7 @@ import { ChevronRight, Send, Sparkles, X } from 'lucide-react'
 
 function Copilot() {
   return (
-    <aside className="hidden min-h-screen bg-white xl:flex xl:flex-col">
+    <aside className="sticky top-0 hidden h-dvh w-80 shrink-0 flex-col border-l border-slate-200 bg-white xl:flex">
       <div className="flex h-16 items-center justify-between border-b border-slate-200 px-5">
         <h2 className="font-medium"><Sparkles className="mr-2 inline text-violet-500" size={16} />Agenda Copilot</h2>
         <X size={16} />

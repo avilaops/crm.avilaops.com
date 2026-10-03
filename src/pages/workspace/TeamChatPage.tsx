@@ -122,24 +122,27 @@ export default function TeamChatPage() {
     <div>
       <Topbar title="Chat & Colaboração da Equipe" />
 
-      <div className="grid min-h-[calc(100vh-4rem)] grid-cols-[280px_minmax(0,1fr)] bg-slate-50">
+      {/* No celular os canais viram uma faixa rolável acima das mensagens; a
+          coluna fixa de 280px empurrava a conversa para fora da tela. */}
+      <div className="grid grid-cols-1 bg-slate-50 expanded:min-h-[calc(100dvh-4rem)] expanded:grid-cols-[280px_minmax(0,1fr)]">
         {/* Painel Esquerdo: Lista de Canais */}
-        <aside className="border-r border-slate-200 bg-white flex flex-col justify-between">
+        <aside className="flex min-w-0 flex-col justify-between border-b border-slate-200 bg-white expanded:border-b-0 expanded:border-r">
           <div>
             <div className="flex items-center justify-between border-b border-slate-100 p-4">
               <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
                 Canais de Comunicação
               </span>
               <button
-                className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+                className="grid size-11 place-items-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-700"
                 onClick={() => setShowChannelModal(true)}
-                title="Novo Canal"
+                title="Novo canal"
+                aria-label="Novo canal"
               >
                 <Plus size={16} />
               </button>
             </div>
 
-            <div className="p-2 space-y-1">
+            <div className="scroll-chips flex gap-1 p-2 expanded:block expanded:space-y-1">
               {loadingChannels && (
                 <p className="p-4 text-center text-xs text-slate-400">Carregando canais...</p>
               )}
@@ -149,7 +152,7 @@ export default function TeamChatPage() {
                   <button
                     key={channel.id}
                     onClick={() => setSelectedChannelId(channel.id)}
-                    className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs font-semibold transition ${
+                    className={`flex min-h-11 shrink-0 items-center gap-2 rounded-lg px-3 py-2 text-left text-xs font-semibold transition expanded:w-full ${
                       isSelected
                         ? 'bg-blue-50 text-blue-700 font-bold'
                         : 'text-slate-600 hover:bg-slate-100'
@@ -163,13 +166,13 @@ export default function TeamChatPage() {
             </div>
           </div>
 
-          <div className="p-4 border-t border-slate-100 text-xs text-slate-400">
+          <div className="hidden border-t border-slate-100 p-4 text-xs text-slate-500 expanded:block">
             🔒 Mensagens internas visíveis apenas para membros do workspace.
           </div>
         </aside>
 
         {/* Painel Direito: Mensagens do Canal */}
-        <section className="flex flex-col justify-between h-[calc(100vh-4rem)]">
+        <section className="flex min-h-[60dvh] min-w-0 flex-col justify-between expanded:h-[calc(100dvh-4rem)]">
           {activeChannel ? (
             <>
               {/* Header do Canal */}
@@ -185,7 +188,7 @@ export default function TeamChatPage() {
                 </div>
                 <div className="flex items-center gap-1.5 text-xs text-slate-500 font-medium">
                   <Users size={14} />
-                  <span>Equipe Ávila Ops</span>
+                  <span>Equipe</span>
                 </div>
               </div>
 

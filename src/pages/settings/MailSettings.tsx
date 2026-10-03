@@ -1,5 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
+import { FormField, FormSection, Notice } from '../../components/ui/Form'
 import { getMailAccount, saveMailAccount, testMailAccount, type MailCheck } from '../../lib/mail'
+import { buttonClass } from '../../lib/ui'
+import { SettingsFrame } from './SettingsFrame'
 
 type Form = {
   imapHost: string
@@ -12,15 +15,20 @@ type Form = {
   fromEmail: string
 }
 
+/**
+ * Valores iniciais neutros. Antes o formulário vinha preenchido com a caixa e o
+ * provedor da própria Ávila Ops — qualquer empresa nova via o e-mail de outra
+ * pessoa ali e, se salvasse sem olhar, tentava entrar na caixa errada.
+ */
 const DEFAULTS: Form = {
-  imapHost: 'imap.porkbun.com',
+  imapHost: '',
   imapPort: 993,
-  smtpHost: 'smtp.porkbun.com',
+  smtpHost: '',
   smtpPort: 587,
-  user: 'nicolas@avilaops.com',
+  user: '',
   password: '',
-  fromName: 'Ávila Ops',
-  fromEmail: 'nicolas@avilaops.com',
+  fromName: '',
+  fromEmail: '',
 }
 
 function CheckLine({ label, result }: { label: string; result: { ok: boolean; detail: string } }) {
@@ -32,7 +40,7 @@ function CheckLine({ label, result }: { label: string; result: { ok: boolean; de
 }
 
 /**
- * Conta de e-mail da operação, cadastrada pela tela.
+ * Canais › E-mail: a conta que lê a caixa de entrada e envia a newsletter.
  *
  * A senha só sobe: ela nunca volta para o navegador. Deixar o campo em branco
  * ao salvar mantém a senha atual — é o caminho de quem só mudou a porta ou o
@@ -58,7 +66,8 @@ function MailSettings() {
       .catch((caught: Error) => setError(caught.message))
   }, [])
 
-  async function save() {
+  async function save(event: FormEvent) {
+    event.preventDefault()
     setBusy('save')
     try {
       const result = await saveMailAccount({ ...form, password: form.password || undefined })
@@ -88,76 +97,74 @@ function MailSettings() {
     }
   }
 
-  const fields: [keyof Form, string, string][] = [
-    ['user', 'Usuário (e-mail da caixa)', 'nicolas@avilaops.com'],
-    ['password', hasPassword ? 'Senha (deixe em branco para manter)' : 'Senha da caixa', '••••••••'],
-    ['imapHost', 'Servidor IMAP (leitura)', 'imap.porkbun.com'],
-    ['imapPort', 'Porta IMAP', '993'],
-    ['smtpHost', 'Servidor SMTP (envio)', 'smtp.porkbun.com'],
-    ['smtpPort', 'Porta SMTP', '587'],
-    ['fromName', 'Nome do remetente', 'Ávila Ops'],
-    ['fromEmail', 'E-mail do remetente', 'nicolas@avilaops.com'],
-  ]
+  const set = (field: keyof Form) => (event: { target: { value: string } }) =>
+    setForm((current) => ({ ...current, [field]: field.endsWith('Port') ? Number(event.target.value) : event.target.value }))
 
   return (
-    <div className="space-y-4">
-      <div>
-        <h3 className="text-lg font-semibold">Conta de e-mail</h3>
-        <p className="text-sm text-slate-500">
-          A mesma conta lê a caixa de entrada e envia as campanhas da newsletter. A senha fica criptografada no banco.
-        </p>
-      </div>
+    <SettingsFrame
+      page="mail-settings"
+      title="E-mail"
+      description="A mesma conta lê a caixa de entrada e envia as campanhas da newsletter. A senha fica criptografada no servidor."
+    >
+      <form onSubmit={save} className="space-y-5">
+        {error && <Notice tone="danger">{error}</Notice>}
+        {message && <Notice tone="success">{message}</Notice>}
+        {lastError && !check && <Notice tone="warning">Última falha registrada: {lastError}</Notice>}
 
-      {error && <p className="rounded border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>}
-      {message && <p className="rounded border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{message}</p>}
-      {lastError && !check && (
-        <p className="rounded border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-          Última falha registrada: {lastError}
-        </p>
-      )}
+        <FormSection title="Caixa de e-mail">
+          <FormField label="Usuário (e-mail da caixa)">
+            <input className="input" inputMode="email" autoCapitalize="none" autoComplete="off" spellCheck={false} placeholder="contato@suaempresa.com.br" value={form.user} onChange={set('user')} required />
+          </FormField>
+          <FormField label={hasPassword ? 'Senha (em branco mantém a atual)' : 'Senha da caixa'}>
+            <input className="input" type="password" autoComplete="new-password" placeholder="••••••••" value={form.password} onChange={set('password')} required={!hasPassword} />
+          </FormField>
+        </FormSection>
 
-      <div className="grid gap-3 sm:grid-cols-2">
-        {fields.map(([field, label, placeholder]) => (
-          <label key={field} className="text-sm">
-            <span className="mb-1 block text-xs font-medium text-slate-500">{label}</span>
-            <input
-              className="w-full rounded border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-400"
-              type={field === 'password' ? 'password' : field.endsWith('Port') ? 'number' : 'text'}
-              value={String(form[field] ?? '')}
-              placeholder={placeholder}
-              autoComplete={field === 'password' ? 'new-password' : 'off'}
-              onChange={(event) =>
-                setForm({ ...form, [field]: field.endsWith('Port') ? Number(event.target.value) : event.target.value })
-              }
-            />
-          </label>
-        ))}
-      </div>
+        <FormSection title="Servidores" description="Estão no painel do seu provedor de e-mail, em configuração de IMAP e SMTP.">
+          <div className="grid grid-cols-[minmax(0,1fr)_6.5rem] gap-3">
+            <FormField label="Servidor de leitura (IMAP)">
+              <input className="input" autoCapitalize="none" placeholder="imap.seudominio.com.br" value={form.imapHost} onChange={set('imapHost')} required />
+            </FormField>
+            <FormField label="Porta">
+              <input className="input" type="number" inputMode="numeric" value={form.imapPort} onChange={set('imapPort')} required />
+            </FormField>
+            <FormField label="Servidor de envio (SMTP)">
+              <input className="input" autoCapitalize="none" placeholder="smtp.seudominio.com.br" value={form.smtpHost} onChange={set('smtpHost')} required />
+            </FormField>
+            <FormField label="Porta">
+              <input className="input" type="number" inputMode="numeric" value={form.smtpPort} onChange={set('smtpPort')} required />
+            </FormField>
+          </div>
+        </FormSection>
 
-      <div className="flex flex-wrap gap-3">
-        <button
-          className="rounded bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-          onClick={() => void save()}
-          disabled={busy === 'save'}
-        >
-          {busy === 'save' ? 'Salvando…' : 'Salvar e testar'}
-        </button>
-        <button
-          className="rounded border border-slate-200 px-4 py-2 text-sm disabled:opacity-50"
-          onClick={() => void test()}
-          disabled={busy === 'test' || !hasPassword}
-        >
-          {busy === 'test' ? 'Testando…' : 'Testar conexão'}
-        </button>
-      </div>
+        <FormSection title="Remetente" description="Como seus contatos veem as mensagens que saem do CRM.">
+          <div className="grid gap-4 medium:grid-cols-2">
+            <FormField label="Nome">
+              <input className="input" placeholder="Nome da empresa" value={form.fromName} onChange={set('fromName')} />
+            </FormField>
+            <FormField label="E-mail">
+              <input className="input" type="email" inputMode="email" autoCapitalize="none" placeholder="contato@suaempresa.com.br" value={form.fromEmail} onChange={set('fromEmail')} />
+            </FormField>
+          </div>
+        </FormSection>
 
-      {check && (
-        <div className="space-y-1 rounded border border-slate-200 bg-white p-4">
-          <CheckLine label="IMAP (ler)" result={check.imap} />
-          <CheckLine label="SMTP (enviar)" result={check.smtp} />
+        <div className="flex flex-wrap gap-3">
+          <button type="submit" className={buttonClass.primary} disabled={busy === 'save'}>
+            {busy === 'save' ? 'Salvando…' : 'Salvar e testar'}
+          </button>
+          <button type="button" className={buttonClass.secondary} onClick={() => void test()} disabled={busy === 'test' || !hasPassword}>
+            {busy === 'test' ? 'Testando…' : 'Testar conexão'}
+          </button>
         </div>
-      )}
-    </div>
+
+        {check && (
+          <div className="space-y-1 rounded-xl border border-slate-200 bg-white p-4">
+            <CheckLine label="IMAP (ler)" result={check.imap} />
+            <CheckLine label="SMTP (enviar)" result={check.smtp} />
+          </div>
+        )}
+      </form>
+    </SettingsFrame>
   )
 }
 

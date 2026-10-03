@@ -456,14 +456,6 @@ export function updateLeadStage(leadId: string, stageId: string) {
   })
 }
 
-export function getQrCodeInstance() {
-  return api<{ instanceName: string; qrcode: string | null; status: string; channelId?: string }>('/api/channels/qrcode/instance', { method: 'POST' })
-}
-
-export function getQrCodeStatus(instanceName: string) {
-  return api<{ status: string; display_name?: string; phone_number?: string }>(`/api/channels/qrcode/status/${instanceName}`)
-}
-
 export interface AuditLogEntry {
   id: string
   entity_type: string

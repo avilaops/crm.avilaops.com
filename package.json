@@ -31,7 +31,7 @@
     "start": "node dist-server/server.js",
     "lint": "oxlint",
     "typecheck": "tsc -b --pretty false && tsc -p tsconfig.server.json --noEmit --pretty false",
-    "test": "npm run cli:test && npm run test:backend",
+    "test": "npm run cli:test && npm run test:backend && npm run test:web",
     "check": "npm run typecheck && npm run lint && npm test",
     "validate": "npm run check && npm run build",
     "preview": "vite preview",
@@ -46,7 +46,8 @@
     "cli:pack": "npm pack --workspace @avilaops/agenda-cli --dry-run",
     "cli:publish": "node scripts/publish-cli.mjs",
     "cli:release": "node scripts/release-cli.mjs",
-    "test:backend": "tsc -p tsconfig.server.json && node --test backend/test/*.test.mjs"
+    "test:backend": "tsc -p tsconfig.server.json && node --test backend/test/*.test.mjs",
+    "test:web": "tsx --tsconfig tsconfig.app.json --test test/web/*.test.ts"
   },
   "dependencies": {
     "@fastify/multipart": "^10.1.1",
@@ -56,7 +57,6 @@
     "@radix-ui/react-select": "^2.3.5",
     "@radix-ui/react-tabs": "^1.1.19",
     "@radix-ui/react-toast": "^1.2.21",
-    "@types/qrcode": "^1.5.6",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "dotenv": "^17.4.2",
@@ -65,7 +65,6 @@
     "lucide-react": "^1.26.0",
     "nodemailer": "^9.0.5",
     "pg": "^8.23.0",
-    "qrcode": "^1.5.4",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "tailwind-merge": "^3.6.0",
@@ -76,7 +75,6 @@
     "@types/node": "^24.13.2",
     "@types/nodemailer": "^8.0.1",
     "@types/pg": "^8.21.0",
-    "@types/qrcode": "^1.5.6",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.3",
@@ -91,3 +89,4 @@
     "esbuild@0.28.2": true
   }
 }
+

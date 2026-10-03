@@ -1,3 +1,12 @@
+/**
+ * Conexão direta com a Meta pelo app do próprio CRM — caminho antigo.
+ *
+ * Desde 04/09/2026 quem fala com a Meta é a Messageria (ver
+ * docs/INTEGRACAO-MESSAGERIA.md). A tela usa só `getMetaStatus`, para avisar
+ * quando ainda existe uma conexão direta; o OAuth e as credenciais ficam aqui,
+ * sem tela, até a integração nova estar comprovada em produção — o roadmap pede
+ * desativar e marcar, não apagar.
+ */
 const WORKER_BASE_URL =
   (import.meta.env.VITE_META_WORKER_URL as string | undefined) ||
   (import.meta.env.VITE_API_BASE_URL as string | undefined) ||

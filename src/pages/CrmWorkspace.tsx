@@ -1,74 +1,53 @@
-import { useEffect, useState } from 'react'
-import Login from '../components/layout/Login'
+import { useCallback, useMemo, useState } from 'react'
+import AppShell from '../components/layout/AppShell'
 import Copilot from '../components/layout/Copilot'
-import Sidebar from '../components/layout/Sidebar'
-import KnowledgeModal from '../components/modals/KnowledgeModal'
-import LeadSourceModal, { type LeadSource } from '../components/modals/LeadSourceModal'
+import Login from '../components/layout/Login'
+import { logout, type SessionUser } from '../lib/auth'
+import { NavigationContext } from '../lib/navigationContext'
+import { canManageRole, SessionContext } from '../lib/session'
+import { isSettingsPage } from '../routes'
+import type { Page, Route } from '../types'
 import SettingsShell from './settings/SettingsPages'
 import Workspace from './workspace/WorkspacePages'
-import type { Page, Screen } from '../types'
 export type { Page } from '../types'
 
 type CrmWorkspaceProps = {
-  initialPage: Page
-  onPageChange: (page: Page) => void
+  route: Route
+  navigate: (next: Route | Page) => void
 }
 
-function CrmWorkspace({ initialPage, onPageChange }: CrmWorkspaceProps) {
-  const [screen, setScreen] = useState<Screen>('login')
-  const [page, setPageState] = useState<Page>(initialPage)
-  const [leadSourceModal, setLeadSourceModal] = useState<LeadSource | null>(null)
-  const [knowledgeModal, setKnowledgeModal] = useState(false)
+function CrmWorkspace({ route, navigate }: CrmWorkspaceProps) {
+  const [user, setUser] = useState<SessionUser | null>(null)
 
-  useEffect(() => {
-    setPageState(initialPage)
-  }, [initialPage])
+  const signOut = useCallback(() => {
+    // Espera o servidor encerrar a sessão antes de mostrar a entrada: a tela de
+    // login confere a sessão ao abrir e, com o cookie ainda vivo, devolveria a
+    // pessoa para dentro do CRM sem ela pedir.
+    logout()
+      .catch(() => undefined)
+      .finally(() => setUser(null))
+  }, [])
 
-  const setPage = (nextPage: Page) => {
-    setPageState(nextPage)
-    onPageChange(nextPage)
+  const session = useMemo(
+    () => (user ? { user, canManage: canManageRole(user.role), signOut, updateUser: setUser } : null),
+    [user, signOut],
+  )
+  const navigation = useMemo(() => ({ route, navigate }), [route, navigate])
+
+  if (!session) {
+    return <Login onEnter={setUser} />
   }
 
-  if (screen === 'login') {
-    return <Login onEnter={() => setScreen('app')} />
-  }
-
-  const inSettings =
-    page.includes('settings') ||
-    page === 'billing' ||
-    page === 'users' ||
-    page === 'knowledge' ||
-    page === 'integrations' ||
-    page === 'lead-sources' ||
-    page === 'channels'
+  const inSettings = isSettingsPage(route.page)
 
   return (
-    <main className="min-h-screen bg-[#f3f3f3] text-slate-800">
-      <div className="grid min-h-screen grid-cols-[232px_minmax(0,1fr)] xl:grid-cols-[232px_minmax(0,1fr)_320px]">
-        <Sidebar page={page} setPage={setPage} />
-        <section className="min-w-0 border-r border-slate-200">
-          {inSettings ? (
-            <SettingsShell page={page} setPage={setPage} openKnowledge={() => setKnowledgeModal(true)} />
-          ) : (
-            <Workspace page={page} setPage={setPage} openLeadSource={setLeadSourceModal} />
-          )}
-        </section>
-        <Copilot />
-      </div>
-      {leadSourceModal && (
-        <LeadSourceModal
-          source={leadSourceModal}
-          onClose={() => setLeadSourceModal(null)}
-          onConnected={() => undefined}
-        />
-      )}
-      {knowledgeModal && (
-        <KnowledgeModal
-          onClose={() => setKnowledgeModal(false)}
-          onCreated={() => setKnowledgeModal(false)}
-        />
-      )}
-    </main>
+    <SessionContext.Provider value={session}>
+      <NavigationContext.Provider value={navigation}>
+        <AppShell aside={inSettings || route.page === 'chat-inbox' ? null : <Copilot />}>
+          {inSettings ? <SettingsShell /> : <Workspace />}
+        </AppShell>
+      </NavigationContext.Provider>
+    </SessionContext.Provider>
   )
 }
 

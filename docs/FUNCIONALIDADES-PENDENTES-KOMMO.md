@@ -374,7 +374,7 @@ O que muda na prática: o trabalho deixa de ser "implementar a Cloud API" e pass
 - [ ] Parar de tratar as rotas Meta do CRM como caminho de produção.
 - [ ] Remover o `META_TOKEN` morto do `.env.production` para ninguém tentar reusá-lo.
 - [ ] Desinscrever o app "Ávila Ops" (`1670392484704840`) do WABA `1055665857141232`, ou deixar explicitamente documentado que ele não recebe webhook.
-- [ ] Encerrar o canal `qrcode` parado em `connecting`: ele desenha um estado que nunca vai avançar.
+- [ ] Encerrar o canal `qrcode` parado em `connecting`: ele desenha um estado que nunca vai avançar. *(02/10/2026: o CRM não cria mais canal por QR — a rota responde 410 — e a tela do WhatsApp avisa quando encontra um; o registro antigo continua no banco.)*
 - [ ] Manter o código de webhook/OAuth desativado e marcado, não apagado, até a integração nova estar comprovada.
 
 #### 6.9.2 Consumir a Messageria
@@ -723,7 +723,7 @@ Prioridade: `P2/P3`
 Estado: ❌ `Ausente` — há somente catálogo visual, e o card da Twilio chega a mostrar "conectado" gravando em `localStorage`
 Prioridade: `P2/P3`
 
-- [ ] Criar catálogo real com busca, categorias, detalhes e estado instalado.
+- [ ] Criar catálogo real com busca, categorias, detalhes e estado instalado. *(02/10/2026: Central com estado real de WhatsApp, e-mail, Messageria, ERP e Google, filtro Canais/Integrações; sem segredo no `localStorage`.)*
 - [ ] Criar framework padronizado de OAuth, credenciais, escopos e callbacks.
 - [ ] Criptografar secrets por tenant e permitir rotação.
 - [ ] Exibir saúde, última sincronização, limites e erros da integração.
@@ -786,8 +786,8 @@ Prioridade: `P1`
 Estado: ⚠️ `Parcial`
 Prioridade: `P1/P2`
 
-- [ ] Tornar sidebar, configurações, inbox, tabelas, calendário e pipeline responsivos.
-- [ ] Criar navegação mobile com acesso rápido a Inbox, Leads, Tarefas e Busca.
+- [x] Tornar sidebar, configurações, inbox, tabelas, calendário e pipeline responsivos. *(02/10/2026, ver [PLANO-MOBILE-E-CANAIS.md](PLANO-MOBILE-E-CANAIS.md).)*
+- [x] Criar navegação mobile com acesso rápido a Inbox, Leads, Tarefas e Busca. *(barra inferior com Início, Conversas, Vendas, Contatos e Mais.)*
 - [ ] Garantir que colunas não se sobreponham em larguras intermediárias.
 - [ ] Criar tabelas adaptativas ou visualização em lista no celular.
 - [ ] Tratar teclado virtual, áreas seguras e composer da conversa.
@@ -797,7 +797,7 @@ Prioridade: `P1/P2`
 - [ ] Adicionar atalhos de teclado no desktop.
 - [ ] Atender navegação por teclado, foco visível, labels e contraste WCAG.
 - [ ] Testar Chrome, Edge, Safari, Firefox, Android e iOS.
-- [ ] Validar visualmente breakpoints reais com screenshots automatizadas.
+- [x] Validar visualmente breakpoints reais com screenshots automatizadas. *(`scripts/telas/verificar.mjs`.)*
 
 ### 6.26 Auditoria, confiabilidade e operação
 
@@ -855,7 +855,7 @@ Estado: ⚠️ `Parcial`
 Prioridade: `P1/P2`
 
 - [ ] Transformar a home em painel real de implantação e operação.
-- [ ] Calcular checklist de onboarding com dados reais.
+- [x] Calcular checklist de onboarding com dados reais. *(02/10/2026: quatro itens no Início, concluídos pelo estado da conta.)*
 - [ ] Guiar conexão de canal, convite da equipe, pipeline, importação e primeiro atendimento.
 - [ ] Criar ajuda contextual sem bloquear a área de trabalho.
 - [ ] Criar documentação para administrador e atendente.

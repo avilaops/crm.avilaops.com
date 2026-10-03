@@ -1,5 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
 import Topbar from '../../components/layout/Topbar'
+import { Notice } from '../../components/ui/Form'
+import { EmptyState } from '../../components/ui/Rows'
+import { hasOfficialWhatsApp } from '../../lib/activation'
+import { formatPhoneBR } from '../../lib/format'
+import { useNavigation } from '../../lib/navigationContext'
+import { initials, useSession } from '../../lib/session'
+import { buttonClass } from '../../lib/ui'
+import { EXPANDED_QUERY, useMediaQuery } from '../../lib/useMediaQuery'
+import HomePage from './HomePage'
 import AiAgentPage from './AiAgentPage'
 import MailInbox from './MailInbox'
 import NewsletterPage from './newsletter/NewsletterPage'
@@ -12,8 +21,7 @@ import AllContactsPage from './AllContactsPage'
 import CreateLeadModal from '../../components/modals/CreateLeadModal'
 import ContactDetailDrawer from '../../components/drawers/ContactDetailDrawer'
 import LeadDetailDrawer from '../../components/drawers/LeadDetailDrawer'
-import { Archive, CalendarDays, CheckCircle2, Clock, FileText, Paperclip, Plus, RefreshCw, Search, Trash2, X } from 'lucide-react'
-import type { LeadSource } from '../../components/modals/LeadSourceModal'
+import { Archive, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, Clock, FileText, MessageCircle, Paperclip, Plus, RefreshCw, Search, Send, SlidersHorizontal, Trash2, UserRound, X } from 'lucide-react'
 import { createGoogleCalendarUrl } from '../../lib/googleCalendar'
 import {
   ApiError,
@@ -26,7 +34,6 @@ import {
   deleteCompany,
   deleteTask,
   getPipeline,
-  listAuditLogs,
   listChannels,
   listCompanies,
   listContacts,
@@ -43,7 +50,6 @@ import {
   syncWhatsAppTemplates,
   updateLeadStage,
   updateTask,
-  type AuditLogEntry,
   type ConversationFilters,
   type CrmChannel,
   type CrmCompany,
@@ -57,91 +63,84 @@ import {
   type PipelineStage,
 } from '../../lib/crm'
 import { useRealtime } from '../../lib/realtime'
-import type { Page } from '../../types'
 
-function Workspace({ page, setPage, openLeadSource }: { page: Page; setPage: (page: Page) => void; openLeadSource: (source: LeadSource) => void }) {
-  if (page === 'home') return <HomePage setPage={setPage} openLeadSource={openLeadSource} />
-  if (page === 'chat-inbox') return <ChatInbox openLeadSource={openLeadSource} />
-  if (page === 'mail-inbox') return <MailInbox />
-  if (page === 'newsletter') return <NewsletterPage />
-  if (page === 'team-chat') return <TeamChatPage />
-  if (page === 'pipeline') return <Pipeline />
-  if (page === 'leads') return <LeadsList />
-  if (page === 'calendar') return <TasksPage />
-  if (page === 'contacts') return <ContactsList />
-  if (page === 'companies') return <CompaniesList />
-  if (page === 'audit-logs') return <AuditLogsList />
-  if (page === 'all-contacts') return <AllContactsPage />
-  if (page === 'media') return <MediaPage />
-  if (page === 'products') return <ProductsPage />
-  if (page === 'segments') return <SegmentsPage />
-  if (page === 'ai-agent') return <AiAgentPage />
-  if (page === 'automations') return <AutomationsPage />
-  return <HomePage setPage={setPage} openLeadSource={openLeadSource} />
+function Workspace() {
+  const { route, navigate } = useNavigation()
+  switch (route.page) {
+    case 'chat-inbox':
+      return (
+        <ChatInbox
+          conversationId={route.param ?? null}
+          openConversation={(id) => navigate({ page: 'chat-inbox', param: id })}
+          closeConversation={() => navigate({ page: 'chat-inbox' })}
+          connectChannel={() => navigate('whatsapp-channel')}
+        />
+      )
+    case 'mail-inbox':
+      return <MailInbox />
+    case 'newsletter':
+      return <NewsletterPage />
+    case 'team-chat':
+      return <TeamChatPage />
+    case 'pipeline':
+      return <Pipeline />
+    case 'leads':
+      return <LeadsList />
+    case 'calendar':
+      return <TasksPage />
+    case 'contacts':
+      return <ContactsList />
+    case 'companies':
+      return <CompaniesList />
+    case 'all-contacts':
+      return <AllContactsPage />
+    case 'media':
+      return <MediaPage />
+    case 'products':
+      return <ProductsPage />
+    case 'segments':
+      return <SegmentsPage />
+    case 'ai-agent':
+      return <AiAgentPage />
+    case 'automations':
+      return <AutomationsPage />
+    default:
+      return <HomePage />
+  }
 }
 
-function HomePage({ setPage, openLeadSource }: { setPage: (page: Page) => void; openLeadSource: (source: LeadSource) => void }) {
-  return (
-    <div>
-      <Topbar title="Início" />
-      <div className="mx-auto max-w-5xl space-y-5 p-6">
-        <section className="relative overflow-hidden rounded bg-white p-8">
-          <button className="absolute right-4 top-4 text-slate-400"><X size={16} /></button>
-          <p className="text-sm text-slate-500">Boas-vindas à Agenda!</p>
-          <h1 className="mt-3 max-w-md text-3xl font-bold">Converta chats em vendas com IA poderosa</h1>
-          <button className="mt-5 rounded bg-blue-600 px-4 py-2 text-sm font-semibold text-white" onClick={() => openLeadSource('whatsapp')}>Explore a Agenda</button>
-          <div className="absolute right-12 top-8 hidden h-40 w-80 rounded bg-violet-100 p-5 md:block">
-            <div className="rounded bg-white px-4 py-2 text-sm">Olá! Gostaria de fazer um pedido</div>
-            <div className="mt-8 rounded bg-violet-600 px-4 py-2 text-sm text-white">O agente de IA está preparando uma resposta...</div>
-          </div>
-        </section>
-        <section className="grid gap-5 bg-white p-6 lg:grid-cols-2">
-          <div>
-            <h3 className="font-semibold">Teste <span className="rounded bg-emerald-100 px-2 py-0.5 text-xs text-emerald-700">Ativo</span></h3>
-            <p className="mt-2 text-sm text-slate-500">Seu período de teste oferece acesso completo ao plano Empresarial.</p>
-            <button className="mt-24 rounded border border-slate-200 px-3 py-2 text-sm" onClick={() => setPage('billing')}>Ir para Faturamento</button>
-          </div>
-          <div className="rounded border border-slate-200 p-4">
-            <h3 className="font-semibold">Visão geral da área de trabalho</h3>
-            {['Dias restantes 12', 'Leads Ilimitado', 'Usuários Ilimitado', 'Contatos & Empresas Ilimitado', 'Números de WhatsApp Ilimitado', 'Espaço de memória 0 / 10 GB'].map((item) => (
-              <div key={item} className="flex justify-between border-b border-slate-100 py-2 text-sm text-slate-600">
-                <span>{item.split(' ').slice(0, -1).join(' ')}</span>
-                <span>{item.split(' ').at(-1)}</span>
-              </div>
-            ))}
-          </div>
-        </section>
-        <section className="rounded bg-white p-5">
-          <h3 className="font-semibold">Tutoriais</h3>
-          <div className="mt-4 grid gap-4 md:grid-cols-3">
-            <Tutorial title="Conecte um canal" button="Conectar canal" onClick={() => openLeadSource('whatsapp')} />
-            <Tutorial title="Crie uma recepcionista com IA" button="Criar recepcionista com IA" />
-            <Tutorial title="Crie um bot de boas-vindas" button="Criar bot" />
-          </div>
-        </section>
-      </div>
-    </div>
-  )
-}
-
-function Tutorial({ title, button, onClick }: { title: string; button: string; onClick?: () => void }) {
-  return (
-    <div className="rounded border border-slate-200 p-4">
-      <div className="mb-4 h-4 w-4 rounded-full border border-slate-300" />
-      <h4 className="font-medium">{title}</h4>
-      <p className="mt-2 text-sm text-slate-500">Comece a receber mensagens direto na Agenda.</p>
-      <button className="mt-4 rounded bg-blue-600 px-3 py-2 text-xs font-semibold text-white" onClick={onClick}>{button}</button>
-    </div>
-  )
-}
-
-function ChatInbox({ openLeadSource }: { openLeadSource: (source: LeadSource) => void }) {
+/**
+ * Caixa de entrada.
+ *
+ * No celular é uma pilha: lista de conversas, depois a conversa, com Voltar —
+ * cada nível com o próprio endereço (`/communications/inbox/<id>/`), então o
+ * botão Voltar do navegador e o link colado funcionam. A partir de 840px a
+ * lista e a conversa ficam lado a lado, como antes.
+ */
+function ChatInbox({
+  conversationId,
+  openConversation,
+  closeConversation,
+  connectChannel,
+}: {
+  conversationId: string | null
+  openConversation: (id: string) => void
+  closeConversation: () => void
+  connectChannel: () => void
+}) {
+  const { user } = useSession()
+  const wide = useMediaQuery(EXPANDED_QUERY)
   const [conversations, setConversations] = useState<CrmConversation[]>([])
-  const [selectedId, setSelectedId] = useState<string | null>(null)
+  // No computador a primeira conversa abre sozinha ao lado da lista. No
+  // celular não: ela ficaria escondida atrás da lista, e o que chegasse nela
+  // seria marcado como lido sem ninguém ter visto.
+  const [autoId, setAutoId] = useState<string | null>(null)
+  const selectedId = conversationId ?? (wide ? autoId : null)
   const [messages, setMessages] = useState<CrmMessage[]>([])
   const [channels, setChannels] = useState<CrmChannel[]>([])
   const [users, setUsers] = useState<CrmUser[]>([])
   const [filters, setFilters] = useState<ConversationFilters>({ page: 1, pageSize: 30 })
+  const [moreFilters, setMoreFilters] = useState(false)
   const [total, setTotal] = useState(0)
   const [unreadTotal, setUnreadTotal] = useState(0)
   const [reply, setReply] = useState('')
@@ -150,6 +149,7 @@ function ChatInbox({ openLeadSource }: { openLeadSource: (source: LeadSource) =>
   const [creatingLead, setCreatingLead] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
   const [templates, setTemplates] = useState<CrmTemplate[]>([])
   const [templateOpen, setTemplateOpen] = useState(false)
   const [syncingTemplates, setSyncingTemplates] = useState(false)
@@ -164,6 +164,9 @@ function ChatInbox({ openLeadSource }: { openLeadSource: (source: LeadSource) =>
   selectedIdRef.current = selectedId
   const conversationsRef = useRef<CrmConversation[]>([])
   const refreshTimer = useRef<number | null>(null)
+  // Abriu a conversa tocando na lista: o Voltar desfaz esse passo do
+  // histórico. Quem chegou por link volta para a lista sem sair do CRM.
+  const openedFromList = useRef(false)
   const [selectedContactId, setSelectedContactId] = useState<string | null>(null)
 
   const refresh = (nextFilters = filters) => {
@@ -173,7 +176,7 @@ function ChatInbox({ openLeadSource }: { openLeadSource: (source: LeadSource) =>
         setConversations(data.conversations)
         setTotal(data.pagination.total)
         setUnreadTotal(data.unread?.messages ?? 0)
-        setSelectedId((current) => current && data.conversations.some((item) => item.id === current) ? current : data.conversations[0]?.id ?? null)
+        setAutoId((current) => current && data.conversations.some((item) => item.id === current) ? current : data.conversations[0]?.id ?? null)
         setError('')
       })
       .catch((err: Error) => setError(err.message))
@@ -190,7 +193,7 @@ function ChatInbox({ openLeadSource }: { openLeadSource: (source: LeadSource) =>
         setUnreadTotal(data.unread?.messages ?? 0)
         setChannels(channelData.channels)
         setUsers(boot.users)
-        setSelectedId(data.conversations[0]?.id ?? null)
+        setAutoId(data.conversations[0]?.id ?? null)
       })
       .catch((err: Error) => active && setError(err.message))
       .finally(() => active && setLoading(false))
@@ -230,6 +233,18 @@ function ChatInbox({ openLeadSource }: { openLeadSource: (source: LeadSource) =>
   useEffect(() => {
     messagesEnd.current?.scrollIntoView({ block: 'end' })
   }, [messages])
+
+  // Abrir a conversa (tocando na lista ou por link) zera o não lido dela. A
+  // primeira conversa que abre sozinha no computador não conta: ninguém a
+  // escolheu, e o contador continua avisando que há o que ler.
+  useEffect(() => {
+    if (!conversationId) return
+    const conversation = conversations.find((item) => item.id === conversationId)
+    if (!conversation || conversation.unread_count === 0) return
+    setUnreadTotal((value) => Math.max(0, value - conversation.unread_count))
+    patchConversation(conversationId, { unread_count: 0 })
+    markConversationRead(conversationId).catch(() => {})
+  }, [conversationId, conversations])
 
   /** Aplica no estado o que o servidor acabou de empurrar. */
   const { connected } = useRealtime((event) => {
@@ -332,18 +347,27 @@ function ChatInbox({ openLeadSource }: { openLeadSource: (source: LeadSource) =>
   }
 
   function handleSelect(conversationId: string) {
-    setSelectedId(conversationId)
-    const conversation = conversations.find((item) => item.id === conversationId)
-    if (!conversation || conversation.unread_count === 0) return
-    setUnreadTotal((value) => Math.max(0, value - conversation.unread_count))
-    patchConversation(conversationId, { unread_count: 0 })
-    markConversationRead(conversationId).catch(() => {})
+    openedFromList.current = true
+    setNotice('')
+    setError('')
+    openConversation(conversationId)
+  }
+
+  function handleBack() {
+    if (openedFromList.current) {
+      openedFromList.current = false
+      window.history.back()
+      return
+    }
+    closeConversation()
   }
 
   const selected = conversations.find((conversation) => conversation.id === selectedId) ?? null
   const waitingCount = conversations.filter((conversation) => conversation.status === 'waiting').length
   const selectedAssignee = selected?.assigned_user_id ?? ''
   const windowState = describeWindow(selected, now)
+  const hasOfficialChannel = hasOfficialWhatsApp(channels)
+  const viewAll = !filters.assignedUserId && !filters.unassigned
 
   async function handleAssign(userId: string) {
     if (!selected) return
@@ -369,7 +393,7 @@ function ChatInbox({ openLeadSource }: { openLeadSource: (source: LeadSource) =>
       const result = await syncWhatsAppTemplates()
       const data = await listWhatsAppTemplates(true)
       setTemplates(data.templates)
-      setError(`${result.total} template(s) sincronizado(s) com a Meta.`)
+      setNotice(`${result.total} template(s) sincronizado(s).`)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -381,6 +405,7 @@ function ChatInbox({ openLeadSource }: { openLeadSource: (source: LeadSource) =>
     if (!selected || !reply.trim()) return
     setSending(true)
     setError('')
+    setNotice('')
     try {
       const result = await sendConversationMessage(selected.id, reply.trim())
       setMessages((items) => (items.some((item) => item.id === result.message.id) ? items : [...items, result.message]))
@@ -404,6 +429,7 @@ function ChatInbox({ openLeadSource }: { openLeadSource: (source: LeadSource) =>
     if (!selected || !file) return
     setUploading(true)
     setError('')
+    setNotice('')
     try {
       const result = await sendConversationMedia(selected.id, file, reply.trim() || undefined)
       setMessages((items) => (items.some((item) => item.id === result.message.id) ? items : [...items, result.message]))
@@ -426,6 +452,7 @@ function ChatInbox({ openLeadSource }: { openLeadSource: (source: LeadSource) =>
     if (!selected) return
     setSending(true)
     setError('')
+    setNotice('')
     try {
       const result = await sendConversationTemplate(selected.id, template.id, variables)
       setMessages((items) => (items.some((item) => item.id === result.message.id) ? items : [...items, result.message]))
@@ -441,9 +468,10 @@ function ChatInbox({ openLeadSource }: { openLeadSource: (source: LeadSource) =>
     if (!selected) return
     setCreatingLead(true)
     setError('')
+    setNotice('')
     try {
       await createLeadFromConversation(selected.id)
-      setError('Lead criado e vinculado ao contato da conversa.')
+      setNotice('Lead criado e vinculado ao contato da conversa.')
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -451,161 +479,231 @@ function ChatInbox({ openLeadSource }: { openLeadSource: (source: LeadSource) =>
     }
   }
 
+  const chipClass = (active: boolean) =>
+    `inline-flex min-h-11 shrink-0 items-center rounded-full border px-3.5 text-sm font-medium transition ${
+      active ? 'border-blue-600 bg-blue-50 text-blue-700' : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
+    }`
+  const actionClass = 'inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 disabled:opacity-60'
+  const officialWindow = selected ? PROVIDERS_WITH_WINDOW.includes(selected.channel_provider ?? '') : false
+  const feedback = (
+    <>
+      {error && <div className="px-3 pt-3 expanded:px-5"><Notice tone="danger">{error}</Notice></div>}
+      {notice && <div className="px-3 pt-3 expanded:px-5"><Notice tone="success">{notice}</Notice></div>}
+    </>
+  )
+
   return (
-    <div>
-      <Topbar title="Caixa de entrada" />
-      <div className="grid min-h-[calc(100vh-4rem)] grid-cols-[360px_minmax(0,1fr)]">
-        <aside className="border-r border-slate-200 bg-white">
-          <div className="space-y-3 border-b border-slate-200 p-4">
-            <span className="rounded bg-lime-100 px-2 py-1 text-xs text-lime-700">Conversas abertas</span>
-            <span className="float-right text-xs text-slate-400">Total: {total}</span>
-            <div className="flex items-center gap-3 text-xs">
-              <span className={`inline-flex items-center gap-1.5 ${connected ? 'text-emerald-600' : 'text-slate-400'}`} title={connected ? 'Recebendo mensagens em tempo real' : 'Reconectando ao fluxo em tempo real'}>
-                <span className={`h-2 w-2 rounded-full ${connected ? 'bg-emerald-500' : 'bg-slate-300'}`} />
+    <div className="flex h-[calc(100dvh-var(--app-bottom-nav))] flex-col">
+      <div className={conversationId ? 'hidden expanded:block' : ''}>
+        <Topbar title="Caixa de entrada" tab={`${total} conversa(s)${unreadTotal > 0 ? ` · ${unreadTotal} não lida(s)` : ''}`} />
+      </div>
+      <div className="grid min-h-0 flex-1 grid-cols-1 expanded:grid-cols-[320px_minmax(0,1fr)]">
+        <aside className={`${conversationId ? 'hidden' : 'flex'} min-h-0 min-w-0 flex-col border-r border-slate-200 bg-white expanded:flex`} aria-label="Conversas">
+          <div className="space-y-3 border-b border-slate-200 p-3">
+            <div className="flex items-center justify-between gap-3 text-xs">
+              <span className={`inline-flex items-center gap-1.5 ${connected ? 'text-emerald-700' : 'text-slate-500'}`} title={connected ? 'Recebendo mensagens em tempo real' : 'Reconectando ao fluxo em tempo real'}>
+                <span className={`size-2 rounded-full ${connected ? 'bg-emerald-500' : 'bg-slate-300'}`} />
                 {connected ? 'Ao vivo' : 'Reconectando'}
               </span>
-              {unreadTotal > 0 && <span className="font-semibold text-blue-600">{unreadTotal} não lida(s)</span>}
+              {waitingCount > 0 && <span className="font-semibold text-amber-700">{waitingCount} aguardando resposta</span>}
             </div>
-            {waitingCount > 0 && <p className="text-xs font-semibold text-amber-600">{waitingCount} cliente(s) aguardando resposta</p>}
             <input
-              className="w-full rounded border border-slate-200 px-3 py-2 text-sm outline-none"
-              placeholder="Buscar contato, telefone, empresa, mensagem..."
+              type="search"
+              className="input"
+              placeholder="Buscar conversa"
+              aria-label="Buscar conversas"
               value={filters.search ?? ''}
               onChange={(event) => setFilters((current) => ({ ...current, search: event.target.value, page: 1 }))}
             />
-            <div className="grid grid-cols-2 gap-2">
-              <select className="rounded border border-slate-200 px-2 py-2 text-xs" value={filters.status ?? ''} onChange={(event) => setFilters((current) => ({ ...current, status: event.target.value || undefined, page: 1 }))}>
-                <option value="">Todos status</option>
-                <option value="waiting">Aguardando</option>
-                <option value="open">Aberto</option>
-                <option value="archived">Arquivado</option>
-              </select>
-              <select className="rounded border border-slate-200 px-2 py-2 text-xs" value={filters.channelId ?? ''} onChange={(event) => setFilters((current) => ({ ...current, channelId: event.target.value || undefined, page: 1 }))}>
-                <option value="">Todos canais</option>
-                {channels.map((channel) => <option key={channel.id} value={channel.id}>{channel.phone_number ?? channel.display_name}</option>)}
-              </select>
-              <select className="rounded border border-slate-200 px-2 py-2 text-xs" value={filters.assignedUserId ?? ''} onChange={(event) => setFilters((current) => ({ ...current, assignedUserId: event.target.value || undefined, unassigned: undefined, page: 1 }))}>
-                <option value="">Todos atendentes</option>
-                {users.map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}
-              </select>
-              <button className={`rounded border px-2 py-2 text-xs ${filters.unassigned ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-slate-200'}`} onClick={() => setFilters((current) => ({ ...current, unassigned: !current.unassigned, assignedUserId: undefined, page: 1 }))}>
+            <div className="scroll-chips -mx-3 flex gap-2 px-3" role="group" aria-label="Filtros rápidos">
+              <button type="button" className={chipClass(viewAll)} aria-pressed={viewAll} onClick={() => setFilters((current) => ({ ...current, assignedUserId: undefined, unassigned: undefined, page: 1 }))}>
+                Todas
+              </button>
+              <button type="button" className={chipClass(filters.assignedUserId === user.id)} aria-pressed={filters.assignedUserId === user.id} onClick={() => setFilters((current) => ({ ...current, assignedUserId: user.id, unassigned: undefined, page: 1 }))}>
+                Minhas
+              </button>
+              <button type="button" className={chipClass(Boolean(filters.unassigned))} aria-pressed={Boolean(filters.unassigned)} onClick={() => setFilters((current) => ({ ...current, unassigned: true, assignedUserId: undefined, page: 1 }))}>
                 Sem responsável
               </button>
-              <button className={`rounded border px-2 py-2 text-xs ${filters.slaOverdue ? 'border-amber-500 bg-amber-50 text-amber-700' : 'border-slate-200'}`} onClick={() => setFilters((current) => ({ ...current, slaOverdue: !current.slaOverdue, page: 1 }))}>
+              <button type="button" className={chipClass(filters.status === 'waiting')} aria-pressed={filters.status === 'waiting'} onClick={() => setFilters((current) => ({ ...current, status: current.status === 'waiting' ? undefined : 'waiting', page: 1 }))}>
+                Aguardando
+              </button>
+              <button type="button" className={chipClass(Boolean(filters.slaOverdue))} aria-pressed={Boolean(filters.slaOverdue)} onClick={() => setFilters((current) => ({ ...current, slaOverdue: !current.slaOverdue, page: 1 }))}>
                 SLA vencido
               </button>
-              <button className="rounded border border-slate-200 px-2 py-2 text-xs" onClick={() => setFilters({ page: 1, pageSize: 30 })}>
-                Limpar
+              <button type="button" className={chipClass(moreFilters)} aria-expanded={moreFilters} onClick={() => setMoreFilters((value) => !value)}>
+                <SlidersHorizontal size={15} className="mr-1.5" aria-hidden="true" />
+                Mais filtros
               </button>
             </div>
+            {moreFilters && (
+              <div className="grid gap-2">
+                <select className="input" aria-label="Status" value={filters.status ?? ''} onChange={(event) => setFilters((current) => ({ ...current, status: event.target.value || undefined, page: 1 }))}>
+                  <option value="">Todos os status</option>
+                  <option value="waiting">Aguardando</option>
+                  <option value="open">Aberto</option>
+                  <option value="archived">Arquivado</option>
+                </select>
+                <select className="input" aria-label="Canal" value={filters.channelId ?? ''} onChange={(event) => setFilters((current) => ({ ...current, channelId: event.target.value || undefined, page: 1 }))}>
+                  <option value="">Todos os canais</option>
+                  {channels.map((channel) => <option key={channel.id} value={channel.id}>{channel.phone_number ? formatPhoneBR(channel.phone_number) : channel.display_name}</option>)}
+                </select>
+                <select className="input" aria-label="Atendente" value={filters.assignedUserId ?? ''} onChange={(event) => setFilters((current) => ({ ...current, assignedUserId: event.target.value || undefined, unassigned: undefined, page: 1 }))}>
+                  <option value="">Todos os atendentes</option>
+                  {users.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+                </select>
+                <button type="button" className={actionClass} onClick={() => setFilters({ page: 1, pageSize: 30 })}>
+                  Limpar filtros
+                </button>
+              </div>
+            )}
           </div>
-          <button className="flex w-full gap-4 border-b border-slate-100 p-4 text-left" onClick={() => openLeadSource('whatsapp')}>
-            <span className="grid h-11 w-11 place-items-center rounded-full border border-dashed border-slate-400">
-              <Plus size={18} />
-            </span>
-            <span>
-              <span className="block font-semibold">Adicionar canais</span>
-              <span className="text-sm text-slate-500">Capture leads do WhatsApp & mais!</span>
-            </span>
-          </button>
-          {loading && <p className="p-8 text-center text-sm text-slate-400">Carregando conversas...</p>}
-          {error && <p className="p-4 text-sm text-red-500">{error}</p>}
-          {!loading && conversations.length === 0 && <p className="p-8 text-center text-sm text-slate-400">Nenhuma conversa encontrada</p>}
-          <div className="divide-y divide-slate-100">
-            {conversations.map((conversation) => (
-              <button
-                key={conversation.id}
-                className={`block w-full p-4 text-left ${conversation.id === selectedId ? 'bg-blue-50' : 'hover:bg-slate-50'}`}
-                onClick={() => handleSelect(conversation.id)}
-              >
-                <div className="flex items-start gap-3">
-                  <div className="relative shrink-0">
-                    <div className="grid h-10 w-10 place-items-center rounded-full bg-slate-200 text-xs font-bold">
-                      {(conversation.contact_name ?? conversation.contact_phone ?? '?').slice(0, 2).toUpperCase()}
+
+          {!loading && !hasOfficialChannel && (
+            <button type="button" className="flex min-h-16 w-full items-center gap-3 border-b border-slate-100 px-4 py-3 text-left hover:bg-slate-50" onClick={connectChannel}>
+              <span className="grid size-10 shrink-0 place-items-center rounded-full border border-dashed border-slate-400 text-slate-600">
+                <Plus size={18} aria-hidden="true" />
+              </span>
+              <span className="min-w-0">
+                <span className="block font-semibold text-slate-900">Conectar o WhatsApp</span>
+                <span className="block text-sm text-slate-500">Receba as mensagens dos clientes aqui.</span>
+              </span>
+            </button>
+          )}
+          {!selected && feedback}
+
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            {loading && conversations.length === 0 && <p className="p-8 text-center text-sm text-slate-500">Carregando conversas…</p>}
+            {!loading && conversations.length === 0 && (
+              <EmptyState
+                icon={MessageCircle}
+                title={hasOfficialChannel ? 'Nenhuma conversa por aqui' : 'Nenhuma conversa ainda'}
+                description={hasOfficialChannel ? 'Quando um cliente escrever, a conversa aparece aqui na hora.' : 'Conecte o WhatsApp para começar a receber mensagens dos seus clientes.'}
+                action={!hasOfficialChannel ? <button type="button" className={buttonClass.primary} onClick={connectChannel}>Conectar o WhatsApp</button> : undefined}
+              />
+            )}
+            <ul className="divide-y divide-slate-100">
+              {conversations.map((conversation) => (
+                <li key={conversation.id}>
+                  <button
+                    type="button"
+                    className={`flex w-full items-start gap-3 px-4 py-3 text-left transition ${conversation.id === selectedId ? 'bg-blue-50' : 'hover:bg-slate-50'}`}
+                    aria-current={conversation.id === selectedId ? 'true' : undefined}
+                    onClick={() => handleSelect(conversation.id)}
+                  >
+                    <div className="relative shrink-0">
+                      <div className="grid size-11 place-items-center rounded-full bg-slate-200 text-xs font-bold text-slate-700">
+                        {(conversation.contact_name ?? conversation.contact_phone ?? '?').slice(0, 2).toUpperCase()}
+                      </div>
+                      {conversation.unread_count > 0 && (
+                        <span className="absolute -right-1 -top-1 grid h-5 min-w-5 place-items-center rounded-full bg-blue-600 px-1 text-[10px] font-bold text-white">
+                          {conversation.unread_count > 99 ? '99+' : conversation.unread_count}
+                        </span>
+                      )}
                     </div>
-                    {conversation.unread_count > 0 && (
-                      <span className="absolute -right-1 -top-1 grid h-5 min-w-5 place-items-center rounded-full bg-blue-600 px-1 text-[10px] font-bold text-white">
-                        {conversation.unread_count > 99 ? '99+' : conversation.unread_count}
-                      </span>
-                    )}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center justify-between gap-2">
-                      <p className={`truncate ${conversation.unread_count > 0 ? 'font-bold' : 'font-semibold'}`}>{conversation.contact_name ?? conversation.contact_phone ?? 'Contato sem nome'}</p>
-                      <StatusPill status={conversation.status} />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className={`truncate ${conversation.unread_count > 0 ? 'font-bold' : 'font-semibold'} text-slate-900`}>{contactLabel(conversation)}</p>
+                        <StatusPill status={conversation.status} />
+                      </div>
+                      <p className="truncate text-sm text-slate-500">
+                        {conversation.contact_name && conversation.contact_phone ? formatPhoneBR(conversation.contact_phone) : conversation.channel_name ?? 'WhatsApp'}
+                      </p>
+                      <p className="mt-0.5 truncate text-xs text-slate-500">
+                        {conversation.unassigned ? 'Sem responsável' : conversation.assigned_user_name ?? 'Responsável definido'}
+                        {conversation.waiting_seconds > 0 ? ` · aguardando ${formatWait(conversation.waiting_seconds)}` : ''}
+                      </p>
                     </div>
-                    <p className="truncate text-sm text-slate-500">{conversation.channel_name ?? 'WhatsApp'} {conversation.channel_phone ? `- ${conversation.channel_phone}` : ''}</p>
-                    <p className="mt-1 text-xs text-slate-400">
-                      {conversation.unassigned ? 'Sem responsável' : conversation.assigned_user_name ?? 'Responsável definido'}
-                      {conversation.waiting_seconds > 0 ? ` · aguardando ${formatWait(conversation.waiting_seconds)}` : ''}
-                    </p>
-                  </div>
-                </div>
-              </button>
-            ))}
+                  </button>
+                </li>
+              ))}
+            </ul>
           </div>
         </aside>
-        <section className="relative bg-slate-50">
+
+        <section className={`${conversationId ? 'flex' : 'hidden'} min-h-0 min-w-0 flex-col bg-slate-50 expanded:flex`} aria-label="Conversa">
           {!selected ? (
-            <div className="grid h-full place-items-center">
-              <div className="max-w-lg text-center text-slate-600">
-                <p>Conecte seus canais para receber e responder a todas as mensagens em um só lugar.</p>
-                <div className="mt-5 flex flex-wrap justify-center gap-2">
-                  <button className="rounded border border-slate-200 bg-white px-3 py-2 text-sm font-semibold" onClick={() => openLeadSource('whatsapp')}>Conectar WhatsApp</button>
-                  <button className="rounded border border-slate-200 bg-white px-3 py-2 text-sm font-semibold">Conectar TikTok</button>
-                  <button className="rounded border border-slate-200 bg-white px-3 py-2 text-sm font-semibold" onClick={() => openLeadSource('instagram')}>Conectar Instagram</button>
-                  <button className="rounded border border-slate-200 bg-white px-3 py-2 text-sm font-semibold">Conectar Facebook</button>
+            <div className="flex min-h-0 flex-1 flex-col">
+              {/* Conversa aberta por link que não está na lista carregada: sem
+                  isto o celular ficaria sem Voltar, porque a barra inferior
+                  some dentro de uma conversa. */}
+              {conversationId && (
+                <div className="flex min-h-14 items-center border-b border-slate-200 bg-white px-1 pt-[env(safe-area-inset-top)] expanded:hidden">
+                  <button type="button" className="grid size-11 place-items-center rounded-full text-slate-600 hover:bg-slate-100" aria-label="Voltar para as conversas" onClick={handleBack}>
+                    <ChevronLeft size={22} aria-hidden="true" />
+                  </button>
+                  <span className="px-1 font-semibold text-slate-900">Conversa</span>
                 </div>
+              )}
+              <div className="grid flex-1 place-items-center p-6">
+                <EmptyState
+                  icon={MessageCircle}
+                  title={loading ? 'Carregando…' : conversationId ? 'Conversa não encontrada nesta lista' : 'Escolha uma conversa'}
+                  description={
+                    conversationId && !loading
+                      ? 'Ela pode estar arquivada ou fora dos filtros. Volte e busque pelo nome ou telefone.'
+                      : hasOfficialChannel || loading
+                        ? 'A conversa aberta aparece aqui, com a janela de 24 horas e o histórico do cliente.'
+                        : 'Conecte o WhatsApp para receber e responder todas as mensagens num lugar só.'
+                  }
+                  action={!hasOfficialChannel && !loading ? <button type="button" className={buttonClass.primary} onClick={connectChannel}>Conectar o WhatsApp</button> : undefined}
+                />
               </div>
             </div>
           ) : (
-            <div className="flex h-full flex-col">
-              <div className="flex h-16 items-center justify-between border-b border-slate-200 bg-white px-5">
-                <div
-                  className={selected.contact_id ? 'cursor-pointer group' : ''}
-                  onClick={() => selected.contact_id && setSelectedContactId(selected.contact_id)}
-                >
-                  <h3 className="font-semibold text-slate-900 group-hover:text-blue-600 transition flex items-center gap-1.5">
-                    {selected.contact_name ?? selected.contact_phone ?? 'Contato'}
-                    {selected.contact_id && (
-                      <span className="rounded border border-blue-200 bg-blue-50 px-1.5 py-0.5 text-[10px] font-semibold text-blue-600">
-                        Ver Ficha
-                      </span>
-                    )}
-                  </h3>
-                  <p className="text-xs text-slate-500">{selected.channel_name ?? 'WhatsApp'} · {selected.status}</p>
+            <div className="flex min-h-0 flex-1 flex-col">
+              <div className="border-b border-slate-200 bg-white pt-[env(safe-area-inset-top)] expanded:pt-0">
+                <div className="flex min-h-14 items-center gap-1 px-1 expanded:min-h-16 expanded:px-5">
+                  <button type="button" className="grid size-11 shrink-0 place-items-center rounded-full text-slate-600 hover:bg-slate-100 expanded:hidden" aria-label="Voltar para as conversas" onClick={handleBack}>
+                    <ChevronLeft size={22} aria-hidden="true" />
+                  </button>
+                  <div className="min-w-0 flex-1 px-1">
+                    <h2 className="truncate font-semibold text-slate-900">{contactLabel(selected)}</h2>
+                    <p className="truncate text-xs text-slate-500">
+                      {selected.channel_phone ? `Pelo ${formatPhoneBR(selected.channel_phone)}` : selected.channel_name ?? 'WhatsApp'}
+                    </p>
+                  </div>
+                  {selected.contact_id && (
+                    <button type="button" className="inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-lg px-3 text-sm font-semibold text-blue-700 hover:bg-blue-50" onClick={() => setSelectedContactId(selected.contact_id)}>
+                      <UserRound size={16} aria-hidden="true" />
+                      Ficha
+                    </button>
+                  )}
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="scroll-chips flex items-center gap-2 px-3 pb-2 expanded:px-5">
                   {windowState.label && (
-                    <span className={`inline-flex items-center gap-1.5 rounded px-2.5 py-1.5 text-xs font-semibold ${windowState.tone}`} title={windowState.hint}>
-                      <Clock size={13} />
+                    <span className={`inline-flex min-h-9 shrink-0 items-center gap-1.5 rounded-full px-3 text-xs font-semibold ${windowState.tone}`} title={windowState.hint}>
+                      <Clock size={13} aria-hidden="true" />
                       {windowState.label}
                     </span>
                   )}
-                  <select className="rounded border border-slate-200 px-3 py-2 text-sm" value={selectedAssignee} onChange={(event) => handleAssign(event.target.value)}>
+                  <select className="input w-auto! shrink-0" aria-label="Responsável" value={selectedAssignee} onChange={(event) => handleAssign(event.target.value)}>
                     <option value="">Sem responsável</option>
-                    {users.map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}
+                    {users.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
                   </select>
                   <button
-                    className="inline-flex items-center gap-2 rounded border border-slate-200 px-3 py-2 text-sm font-semibold"
+                    type="button"
+                    className={actionClass}
                     onClick={() => archiveConversation(selected.id).then(() => patchConversation(selected.id, { status: 'archived' }))}
                   >
-                    <Archive size={15} />
+                    <Archive size={15} aria-hidden="true" />
                     Arquivar
                   </button>
-                  <button className="rounded bg-blue-600 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60" disabled={creatingLead} onClick={handleCreateLead}>
-                    {creatingLead ? 'Criando...' : 'Criar lead'}
+                  <button type="button" className={actionClass} disabled={creatingLead} onClick={handleCreateLead}>
+                    <Plus size={15} aria-hidden="true" />
+                    {creatingLead ? 'Criando…' : 'Criar lead'}
                   </button>
                 </div>
               </div>
-              <div className="flex-1 space-y-3 overflow-auto p-5">
-                {messages.length === 0 && <p className="mt-12 text-center text-sm text-slate-400">Nenhuma mensagem gravada para esta conversa.</p>}
+              {feedback}
+              <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3 expanded:p-5">
+                {messages.length === 0 && <p className="mt-12 text-center text-sm text-slate-500">Nenhuma mensagem gravada para esta conversa.</p>}
                 {messages.map((message) => (
                   <MessageBubble key={message.id} message={message} />
                 ))}
                 <div ref={messagesEnd} />
               </div>
-              <div className="border-t border-slate-200 bg-white p-4">
+              <div className="border-t border-slate-200 bg-white p-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] expanded:p-4">
                 {templateOpen || !windowState.canSendFreeText ? (
                   <TemplateComposer
                     templates={templates}
@@ -618,7 +716,13 @@ function ChatInbox({ openLeadSource }: { openLeadSource: (source: LeadSource) =>
                   />
                 ) : (
                   <>
-                    <textarea className="h-20 w-full resize-none rounded border border-slate-200 p-3 text-sm outline-none" value={reply} onChange={(event) => setReply(event.target.value)} placeholder="Responder pelo WhatsApp..." />
+                    <textarea
+                      className="input min-h-20 resize-none"
+                      aria-label="Resposta"
+                      value={reply}
+                      onChange={(event) => setReply(event.target.value)}
+                      placeholder="Responder pelo WhatsApp…"
+                    />
                     <div className="mt-2 flex items-center justify-between gap-2">
                       <div className="flex items-center gap-2">
                         <input
@@ -628,23 +732,25 @@ function ChatInbox({ openLeadSource }: { openLeadSource: (source: LeadSource) =>
                           onChange={(event) => handleAttach(event.target.files?.[0])}
                         />
                         <button
-                          className="inline-flex items-center gap-2 rounded border border-slate-200 px-3 py-2 text-sm font-semibold disabled:opacity-60"
+                          type="button"
+                          className={actionClass}
                           disabled={uploading || selected.channel_provider !== 'whatsapp'}
-                          title={selected.channel_provider !== 'whatsapp' ? 'Anexos disponíveis apenas na API oficial do WhatsApp' : 'Anexar arquivo'}
+                          title={selected.channel_provider !== 'whatsapp' ? 'Anexos ainda não passam pela Messageria' : 'Anexar arquivo'}
                           onClick={() => fileInput.current?.click()}
                         >
-                          <Paperclip size={15} />
-                          {uploading ? 'Enviando anexo...' : 'Anexar'}
+                          <Paperclip size={15} aria-hidden="true" />
+                          <span className="max-medium:sr-only">{uploading ? 'Enviando anexo…' : 'Anexar'}</span>
                         </button>
-                        {selected.channel_provider === 'whatsapp' && (
-                          <button className="inline-flex items-center gap-2 rounded border border-slate-200 px-3 py-2 text-sm font-semibold" onClick={loadTemplates}>
-                            <FileText size={15} />
-                            Template
+                        {officialWindow && (
+                          <button type="button" className={actionClass} onClick={loadTemplates}>
+                            <FileText size={15} aria-hidden="true" />
+                            <span className="max-medium:sr-only">Modelo</span>
                           </button>
                         )}
                       </div>
-                      <button className="rounded bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60" disabled={sending || !reply.trim()} onClick={handleSend}>
-                        {sending ? 'Enviando...' : 'Enviar resposta'}
+                      <button type="button" className={buttonClass.primary} disabled={sending || !reply.trim()} onClick={handleSend}>
+                        <Send size={16} aria-hidden="true" />
+                        {sending ? 'Enviando…' : 'Enviar'}
                       </button>
                     </div>
                   </>
@@ -666,6 +772,13 @@ function ChatInbox({ openLeadSource }: { openLeadSource: (source: LeadSource) =>
   )
 }
 
+/** Canais em que vale a janela de 24h da Meta — o mesmo que o backend aplica. */
+const PROVIDERS_WITH_WINDOW = ['whatsapp', 'messageria']
+
+function contactLabel(conversation: CrmConversation) {
+  return conversation.contact_name || formatPhoneBR(conversation.contact_phone) || 'Contato sem nome'
+}
+
 /**
  * Traduz a janela de 24h para o que a tela precisa decidir.
  *
@@ -673,7 +786,9 @@ function ChatInbox({ openLeadSource }: { openLeadSource: (source: LeadSource) =>
  * avisar antes de o atendente escrever, nao para autorizar o envio.
  */
 function describeWindow(conversation: CrmConversation | null, now: number) {
-  if (!conversation || conversation.channel_provider !== 'whatsapp') {
+  // A janela é regra da Meta, não do caminho: vale para a Cloud API falada
+  // daqui e para o mesmo número falado pela Messageria.
+  if (!conversation || !PROVIDERS_WITH_WINDOW.includes(conversation.channel_provider ?? '')) {
     return { canSendFreeText: true, label: '', tone: '', hint: '' }
   }
   if (!conversation.window_expires_at) {
@@ -699,8 +814,18 @@ function describeWindow(conversation: CrmConversation | null, now: number) {
     canSendFreeText: true,
     label: hours > 0 ? `Janela: ${hours}h${minutes > 0 ? ` ${minutes}min` : ''}` : `Janela: ${minutes}min`,
     tone: hours < 2 ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700',
-    hint: 'Tempo restante para responder com texto livre pela API oficial.',
+    hint: 'Tempo restante para responder com texto livre.',
   }
+}
+
+/** O status gravado é o da plataforma (sent, delivered...); a bolha fala português. */
+const messageStatusLabels: Record<string, string> = {
+  sent: 'enviada',
+  delivered: 'entregue',
+  read: 'lida',
+  failed: 'falhou',
+  pending: 'enviando',
+  queued: 'na fila',
 }
 
 function MessageBubble({ message }: { message: CrmMessage }) {
@@ -717,7 +842,7 @@ function MessageBubble({ message }: { message: CrmMessage }) {
         {texto && <p className={message.media_id ? 'mt-2 whitespace-pre-wrap' : 'whitespace-pre-wrap'}>{texto}</p>}
         {!texto && !message.media_id && <p className="italic opacity-70">[sem conteúdo]</p>}
         <p className={`mt-2 text-xs ${inbound ? 'text-slate-400' : 'text-blue-100'}`}>
-          {new Date(message.sent_at).toLocaleString('pt-BR')} · {message.message_type === 'template' ? 'template · ' : ''}{message.status}
+          {new Date(message.sent_at).toLocaleString('pt-BR')} · {message.message_type === 'template' ? 'modelo · ' : ''}{messageStatusLabels[message.status] ?? message.status}
         </p>
         {message.error_message && <p className="mt-1 text-xs text-red-500">{message.error_message}</p>}
       </div>
@@ -887,6 +1012,8 @@ function Pipeline() {
   const [selectedContactId, setSelectedContactId] = useState<string | null>(null)
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [createDefaultStageId, setCreateDefaultStageId] = useState<string | undefined>(undefined)
+  // Etapa aberta no celular, onde o funil mostra uma por vez.
+  const [activeStageId, setActiveStageId] = useState<string | null>(null)
 
   const loadPipeline = () => {
     setLoading(true)
@@ -923,29 +1050,85 @@ function Pipeline() {
   }
 
   const totalValueCents = leads.reduce((acc, l) => acc + (l.value_cents || 0), 0)
+  const currentStage = stages.find((stage) => stage.id === activeStageId) ?? stages[0] ?? null
+  const currentStageLeads = currentStage ? leads.filter((l) => l.stage_id === currentStage.id) : []
 
   return (
     <div>
       <Topbar
-        title="Funil de Vendas & Oportunidades"
+        title="Funil de vendas"
         tab={`${formatCurrency(totalValueCents)} · ${leads.length} oportunidade(s)`}
-        action="+ Nova Oportunidade"
+        action="+ Novo negócio"
         onAction={() => {
-          setCreateDefaultStageId(stages[0]?.id)
+          setCreateDefaultStageId(currentStage?.id ?? stages[0]?.id)
           setShowCreateModal(true)
         }}
       />
 
-      <div className="overflow-auto p-5">
-        {error && (
-          <p className="mb-4 rounded border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-            {error}
-          </p>
-        )}
+      {error && (
+        <div className="px-4 pt-4 medium:px-5">
+          <Notice tone="danger">{error}</Notice>
+        </div>
+      )}
 
+      {/* Celular: uma etapa por vez. Arrastar card entre colunas num visor de
+          390px não funciona; aqui troca-se de etapa pelas abas e move-se o
+          negócio pelo "Mover para…" do próprio card, em dois toques. */}
+      <div className="medium:hidden">
+        <div className="scroll-chips flex gap-2 px-4 py-3" role="tablist" aria-label="Etapas do funil">
+          {stages.map((stage) => {
+            const stageLeads = leads.filter((l) => l.stage_id === stage.id)
+            const active = stage.id === currentStage?.id
+            return (
+              <button
+                key={stage.id}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                onClick={() => setActiveStageId(stage.id)}
+                className={`inline-flex min-h-11 shrink-0 items-center gap-2 rounded-full border px-3.5 text-sm font-medium transition ${
+                  active ? 'border-blue-600 bg-blue-50 text-blue-700' : 'border-slate-200 bg-white text-slate-600'
+                }`}
+              >
+                <span className="size-2 rounded-full" style={{ backgroundColor: stage.color }} aria-hidden="true" />
+                {stage.name}
+                <span className="rounded-full bg-slate-100 px-1.5 text-xs font-semibold text-slate-600">{stageLeads.length}</span>
+              </button>
+            )
+          })}
+        </div>
+        {loading && <p className="px-4 py-6 text-sm text-slate-500">Carregando funil…</p>}
+        {!loading && currentStage && (
+          <section role="tabpanel" aria-label={currentStage.name} className="space-y-3 px-4 pb-6">
+            <p className="text-sm text-slate-500">
+              {currentStageLeads.length} negócio(s) · <span className="font-semibold text-slate-800">{formatCurrency(currentStageLeads.reduce((acc, l) => acc + (l.value_cents || 0), 0))}</span>
+            </p>
+            {currentStageLeads.map((lead) => (
+              <LeadCard key={lead.id} lead={lead} stages={stages} onStageChange={handleStageChange} onClick={() => setSelectedLead(lead)} />
+            ))}
+            {currentStageLeads.length === 0 && (
+              <p className="rounded-xl border border-dashed border-slate-300 p-6 text-center text-sm text-slate-500">Nenhum negócio nesta etapa.</p>
+            )}
+            <button
+              type="button"
+              className="min-h-11 w-full rounded-lg border border-dashed border-slate-300 text-sm font-semibold text-slate-600 hover:border-slate-400"
+              onClick={() => {
+                setCreateDefaultStageId(currentStage.id)
+                setShowCreateModal(true)
+              }}
+            >
+              + Adicionar nesta etapa
+            </button>
+          </section>
+        )}
+      </div>
+
+      {/* Tablet: colunas de 280px com encaixe ao rolar. Computador: o quadro
+          inteiro, cada etapa dividindo a largura. */}
+      <div className="hidden snap-x snap-mandatory overflow-x-auto p-5 medium:block expanded:snap-none">
         <div
-          className="grid min-w-[980px] gap-4 rounded bg-white p-4"
-          style={{ gridTemplateColumns: `repeat(${Math.max(stages.length, 1)}, minmax(240px, 1fr))` }}
+          className="grid gap-4 rounded-xl bg-white p-4 [grid-template-columns:repeat(var(--etapas),280px)] expanded:[grid-template-columns:repeat(var(--etapas),minmax(240px,1fr))]"
+          style={{ '--etapas': Math.max(stages.length, 1) } as React.CSSProperties}
         >
           {loading && <p className="p-4 text-sm text-slate-400">Carregando funil...</p>}
           {!loading &&
@@ -953,7 +1136,7 @@ function Pipeline() {
               const stageLeads = leads.filter((l) => l.stage_id === stage.id)
               const stageValue = stageLeads.reduce((acc, l) => acc + (l.value_cents || 0), 0)
               return (
-                <div key={stage.id} className="min-h-[560px] rounded-xl border border-slate-200 bg-slate-50/60 p-3 flex flex-col justify-between">
+                <div key={stage.id} className="flex min-h-[560px] snap-start flex-col justify-between rounded-xl border border-slate-200 bg-slate-50/60 p-3">
                   <div>
                     <div
                       className="border-b-2 pb-2.5 flex items-center justify-between"
@@ -963,7 +1146,7 @@ function Pipeline() {
                         <h4 className="text-xs font-bold uppercase tracking-wider text-slate-900">
                           {stage.name}
                         </h4>
-                        <p className="text-[10px] font-semibold text-slate-400">
+                        <p className="text-[11px] font-semibold text-slate-500">
                           {formatCurrency(stageValue)}
                         </p>
                       </div>
@@ -985,12 +1168,13 @@ function Pipeline() {
                     </div>
 
                     {stageLeads.length === 0 && (
-                      <p className="p-6 text-center text-xs text-slate-400">Sem leads nesta etapa.</p>
+                      <p className="p-6 text-center text-xs text-slate-500">Sem leads nesta etapa.</p>
                     )}
                   </div>
 
                   <button
-                    className="mt-3 w-full rounded-lg border border-dashed border-slate-300 py-2 text-center text-xs font-semibold text-slate-500 hover:border-slate-400 hover:text-slate-800 transition"
+                    type="button"
+                    className="mt-3 min-h-11 w-full rounded-lg border border-dashed border-slate-300 text-center text-xs font-semibold text-slate-500 hover:border-slate-400 hover:text-slate-800 transition"
                     onClick={() => {
                       setCreateDefaultStageId(stage.id)
                       setShowCreateModal(true)
@@ -1087,13 +1271,14 @@ function LeadCard({
             onClick={(e) => e.stopPropagation()}
           >
             <select
-              className="w-full rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-semibold text-slate-700 outline-none hover:bg-slate-100"
+              className="min-h-11 w-full rounded-lg border border-slate-200 bg-slate-50 px-2 text-[11px] font-semibold text-slate-700 outline-none hover:bg-slate-100 expanded:min-h-8"
+              aria-label={`Mover ${lead.title} para outra etapa`}
               value={lead.stage_id ?? ''}
               onChange={(e) => onStageChange(lead.id, e.target.value)}
             >
               {stages.map((s) => (
                 <option key={s.id} value={s.id}>
-                  Mover: {s.name}
+                  {s.id === lead.stage_id ? `Etapa: ${s.name}` : `Mover para ${s.name}`}
                 </option>
               ))}
             </select>
@@ -1169,11 +1354,40 @@ function CompaniesList() {
 
   return (
     <div>
-      <Topbar title="Empresas" tab={`${total} empresa(s)`} action="+ Nova Empresa" onAction={() => setShowModal(true)} />
-      <div className="space-y-4 p-5">
-        <input className="w-full max-w-md rounded border border-slate-200 bg-white px-3 py-2 text-sm outline-none" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar empresas por nome, CNPJ, site ou email..." />
-        {error && <p className="rounded border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>}
-        <DataTable columns={['Empresa', 'CNPJ', 'Domínio / Site', 'Telefone', 'E-mail', 'Contatos Vinculados', 'Ações']}>
+      <Topbar title="Empresas" tab={`${total} empresa(s)`} action="+ Nova empresa" onAction={() => setShowModal(true)} />
+      <div className="space-y-4 p-4 medium:p-5">
+        <input type="search" className="input max-w-md" aria-label="Buscar empresas" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar por nome, CNPJ, site ou e-mail" />
+        {error && <Notice tone="danger">{error}</Notice>}
+        <DataTable
+          columns={['Empresa', 'CNPJ', 'Domínio / Site', 'Telefone', 'E-mail', 'Contatos Vinculados', 'Ações']}
+          cards={
+            <CardList>
+              {loading && companies.length === 0 && <CardMessage text="Carregando empresas…" />}
+              {!loading && companies.length === 0 && <CardMessage text={search ? 'Nenhuma empresa encontrada.' : 'Nenhuma empresa cadastrada ainda.'} />}
+              {companies.map((company) => (
+                <li key={company.id} className="flex min-h-16 items-center gap-3 px-4 py-3">
+                  <span className="grid size-10 shrink-0 place-items-center rounded-full bg-slate-200 text-xs font-bold text-slate-700" aria-hidden="true">
+                    {initials(company.name)}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate font-medium text-slate-900">{company.name}</span>
+                    <span className="block truncate text-sm text-slate-500">
+                      {[company.cnpj, company.phone ? formatPhoneBR(company.phone) : null, `${company.contacts_count ?? 0} contato(s)`].filter(Boolean).join(' · ')}
+                    </span>
+                  </span>
+                  <button
+                    type="button"
+                    className="grid size-11 shrink-0 place-items-center rounded-lg text-slate-500 hover:bg-red-50 hover:text-red-600"
+                    aria-label={`Excluir ${company.name}`}
+                    onClick={() => handleDeleteCompany(company.id)}
+                  >
+                    <Trash2 size={17} aria-hidden="true" />
+                  </button>
+                </li>
+              ))}
+            </CardList>
+          }
+        >
           {loading && <TableMessage colSpan={7} text="Carregando empresas..." />}
           {!loading && companies.length === 0 && <TableMessage colSpan={7} text="Nenhuma empresa cadastrada." />}
           {companies.map((company) => (
@@ -1486,7 +1700,23 @@ function ContactsList() {
 
   return (
     <DataPage title="Contatos" tab={`${total} contato(s)`} search={search} setSearch={setSearch} error={error}>
-      <DataTable columns={['Nome', 'Empresa', 'Telefone', 'E-mail', 'Origem', 'Atualizado']}>
+      <DataTable
+        columns={['Nome', 'Empresa', 'Telefone', 'E-mail', 'Origem', 'Atualizado']}
+        cards={
+          <CardList>
+            {loading && contacts.length === 0 && <CardMessage text="Carregando contatos…" />}
+            {!loading && contacts.length === 0 && <CardMessage text={search ? 'Nenhum contato encontrado.' : 'Nenhum contato ainda. Quem escreve no WhatsApp entra aqui sozinho.'} />}
+            {contacts.map((contact) => (
+              <CardRow
+                key={contact.id}
+                title={contact.name}
+                detail={[formatPhoneBR(contact.phone), contact.company].filter(Boolean).join(' · ') || contact.email || 'Sem telefone'}
+                onClick={() => setSelectedContactId(contact.id)}
+              />
+            ))}
+          </CardList>
+        }
+      >
         {loading && <TableMessage colSpan={6} text="Carregando contatos..." />}
         {!loading && contacts.length === 0 && <TableMessage colSpan={6} text="Nenhum contato encontrado." />}
         {contacts.map((contact) => (
@@ -1497,7 +1727,7 @@ function ContactsList() {
           >
             <td className="px-4 py-3 font-bold text-slate-900">{contact.name}</td>
             <td className="px-4 py-3 text-slate-600">{contact.company ?? '-'}</td>
-            <td className="px-4 py-3 font-mono text-slate-600">{contact.phone ?? '-'}</td>
+            <td className="whitespace-nowrap px-4 py-3 tabular-nums text-slate-600">{contact.phone ? formatPhoneBR(contact.phone) : '-'}</td>
             <td className="px-4 py-3 text-slate-600">{contact.email ?? '-'}</td>
             <td className="px-4 py-3">
               <span className="rounded bg-slate-100 px-2 py-0.5 text-[11px] font-semibold uppercase text-slate-700">
@@ -1560,7 +1790,24 @@ function LeadsList() {
 
   return (
     <DataPage title="Leads & Negócios" tab={`${total} lead(s)`} search={search} setSearch={setSearch} error={error}>
-      <DataTable columns={['Oportunidade', 'Contato', 'Empresa', 'Etapa', 'Valor', 'Status']}>
+      <DataTable
+        columns={['Oportunidade', 'Contato', 'Empresa', 'Etapa', 'Valor', 'Status']}
+        cards={
+          <CardList>
+            {loading && leads.length === 0 && <CardMessage text="Carregando leads…" />}
+            {!loading && leads.length === 0 && <CardMessage text={search ? 'Nenhum lead encontrado.' : 'Nenhum lead ainda. Crie o primeiro no Funil ou a partir de uma conversa.'} />}
+            {leads.map((lead) => (
+              <CardRow
+                key={lead.id}
+                title={lead.title}
+                detail={[lead.contact_name, lead.stage_name].filter(Boolean).join(' · ') || 'Sem contato'}
+                aside={<span className="shrink-0 text-sm font-semibold tabular-nums text-slate-900">{formatCurrency(lead.value_cents)}</span>}
+                onClick={() => setSelectedLead(lead)}
+              />
+            ))}
+          </CardList>
+        }
+      >
         {loading && <TableMessage colSpan={6} text="Carregando leads..." />}
         {!loading && leads.length === 0 && <TableMessage colSpan={6} text="Nenhum lead encontrado." />}
         {leads.map((lead) => (
@@ -1618,144 +1865,70 @@ function DataPage({ title, tab, search, setSearch, error, children }: { title: s
   return (
     <div>
       <Topbar title={title} tab={tab} />
-      <div className="space-y-4 p-5">
-        <input className="w-full max-w-md rounded border border-slate-200 bg-white px-3 py-2 text-sm outline-none" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar..." />
-        {error && <p className="rounded border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>}
+      <div className="space-y-4 p-4 medium:p-5">
+        <input
+          type="search"
+          className="input max-w-md"
+          aria-label={`Buscar em ${title}`}
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+          placeholder="Buscar…"
+        />
+        {error && <Notice tone="danger">{error}</Notice>}
         {children}
       </div>
     </div>
   )
 }
 
-function DataTable({ columns, children }: { columns: string[]; children: React.ReactNode }) {
+/**
+ * Tabela que vira lista de cartões no celular.
+ *
+ * Abaixo de 600px aparece `cards`: nome em destaque e dois dados que importam.
+ * Acima, a tabela, com a primeira coluna presa à esquerda para não se perder de
+ * quem é a linha ao rolar para o lado.
+ */
+function DataTable({ columns, cards, children }: { columns: string[]; cards?: React.ReactNode; children: React.ReactNode }) {
   return (
-    <div className="overflow-auto bg-white">
-      <table className="min-w-[860px] w-full border-collapse text-sm">
-        <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
-          <tr>{columns.map((column) => <th key={column} className="border-b border-slate-200 px-4 py-3">{column}</th>)}</tr>
-        </thead>
-        <tbody>{children}</tbody>
-      </table>
-    </div>
+    <>
+      {cards && <div className="medium:hidden">{cards}</div>}
+      <div className={`${cards ? 'hidden medium:block' : ''} overflow-auto rounded-xl border border-slate-200 bg-white`}>
+        <table className="w-full min-w-[860px] border-collapse text-sm [&_td:first-child]:sticky [&_td:first-child]:left-0 [&_td:first-child]:bg-white [&_th:first-child]:sticky [&_th:first-child]:left-0 [&_th:first-child]:bg-slate-50">
+          <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
+            <tr>{columns.map((column) => <th key={column} className="border-b border-slate-200 px-4 py-3">{column}</th>)}</tr>
+          </thead>
+          <tbody>{children}</tbody>
+        </table>
+      </div>
+    </>
   )
 }
 
-function AuditLogsList() {
-  const [logs, setLogs] = useState<AuditLogEntry[]>([])
-  const [search, setSearch] = useState('')
-  const [entityType, setEntityType] = useState('all')
-  const [total, setTotal] = useState(0)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
-  const [expandedId, setExpandedId] = useState<string | null>(null)
+function CardList({ children }: { children: React.ReactNode }) {
+  return <ul className="divide-y divide-slate-100 overflow-hidden rounded-xl border border-slate-200 bg-white">{children}</ul>
+}
 
-  useEffect(() => {
-    const timeout = window.setTimeout(() => {
-      setLoading(true)
-      listAuditLogs({ entityType, search, page: 1, pageSize: 50 })
-        .then((data) => {
-          setLogs(data.logs)
-          setTotal(data.pagination.total)
-          setError('')
-        })
-        .catch((err: Error) => setError(err.message))
-        .finally(() => setLoading(false))
-    }, 250)
-    return () => window.clearTimeout(timeout)
-  }, [entityType, search])
-
-  const getEventBadge = (type: string) => {
-    if (type.includes('created') || type.includes('login')) return 'bg-emerald-100 text-emerald-800 border-emerald-200'
-    if (type.includes('failed') || type.includes('deleted')) return 'bg-rose-100 text-rose-800 border-rose-200'
-    if (type.includes('updated') || type.includes('sent')) return 'bg-blue-100 text-blue-800 border-blue-200'
-    return 'bg-slate-100 text-slate-700 border-slate-200'
-  }
-
+function CardRow({ title, detail, aside, onClick }: { title: string; detail: string; aside?: React.ReactNode; onClick: () => void }) {
   return (
-    <div>
-      <Topbar title="Auditoria & Logs de Segurança" tab={`${total} evento(s) auditado(s)`} />
-      <div className="p-6 space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-3 bg-white p-4 rounded border border-slate-200 shadow-sm">
-          <div className="flex items-center gap-2 flex-1 min-w-[240px]">
-            <Search size={18} className="text-slate-400" />
-            <input
-              type="text"
-              placeholder="Buscar por usuário, e-mail, evento ou ID..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="w-full bg-transparent text-sm outline-none placeholder:text-slate-400"
-            />
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-semibold text-slate-500">Filtrar Categoria:</span>
-            <select
-              value={entityType}
-              onChange={(e) => setEntityType(e.target.value)}
-              className="rounded border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-700 outline-none"
-            >
-              <option value="all">Todas as Categorias</option>
-              <option value="message">Mensagens & WhatsApp</option>
-              <option value="lead">Leads & Funil</option>
-              <option value="contact">Contatos</option>
-              <option value="task">Tarefas</option>
-              <option value="company">Empresas</option>
-              <option value="integration">Integrações & Meta</option>
-              <option value="auth">Autenticação & Acesso</option>
-            </select>
-          </div>
-        </div>
-
-        {error && <div className="rounded border border-red-200 bg-red-50 p-4 text-sm text-red-600">{error}</div>}
-
-        <div className="overflow-hidden bg-white rounded border border-slate-200 shadow-sm">
-          <DataTable columns={['Data e Hora', 'Usuário / Responsável', 'Evento Auditado', 'Categoria', 'Request ID', 'Ações']}>
-            {loading && <TableMessage colSpan={6} text="Carregando logs de auditoria..." />}
-            {!loading && logs.length === 0 && <TableMessage colSpan={6} text="Nenhum evento de auditoria encontrado." />}
-            {logs.map((log) => (
-              <>
-                <tr key={log.id} className="border-b border-slate-100 hover:bg-slate-50/50">
-                  <td className="px-4 py-3 font-mono text-xs text-slate-600">
-                    {new Date(log.created_at).toLocaleString('pt-BR')}
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="font-medium text-slate-900">{log.user_name ?? 'Sistema / Webhook'}</div>
-                    {log.user_email && <div className="text-xs text-slate-400">{log.user_email}</div>}
-                  </td>
-                  <td className="px-4 py-3">
-                    <span className={`inline-block rounded-full border px-2.5 py-0.5 text-xs font-semibold ${getEventBadge(log.event_type)}`}>
-                      {log.event_type}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 text-xs uppercase font-bold text-slate-500">{log.entity_type}</td>
-                  <td className="px-4 py-3 font-mono text-xs text-slate-400">{log.request_id ? log.request_id.slice(0, 13) : '-'}</td>
-                  <td className="px-4 py-3">
-                    <button
-                      className="rounded border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-100"
-                      onClick={() => setExpandedId(expandedId === log.id ? null : log.id)}
-                    >
-                      {expandedId === log.id ? 'Ocultar JSON' : 'Ver Detalhes'}
-                    </button>
-                  </td>
-                </tr>
-                {expandedId === log.id && (
-                  <tr key={`${log.id}-details`} className="bg-slate-900 text-slate-200">
-                    <td colSpan={6} className="p-4">
-                      <div className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-400">Trilha de Detalhes do Evento (Payload JSON):</div>
-                      <pre className="overflow-x-auto rounded bg-slate-950 p-3 font-mono text-xs text-emerald-400">
-                        {JSON.stringify(log.payload, null, 2)}
-                      </pre>
-                    </td>
-                  </tr>
-                )}
-              </>
-            ))}
-          </DataTable>
-        </div>
-      </div>
-    </div>
+    <li>
+      <button type="button" className="flex min-h-16 w-full items-center gap-3 px-4 py-3 text-left transition hover:bg-slate-50" onClick={onClick}>
+        <span className="grid size-10 shrink-0 place-items-center rounded-full bg-slate-200 text-xs font-bold text-slate-700" aria-hidden="true">
+          {initials(title)}
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block truncate font-medium text-slate-900">{title}</span>
+          <span className="block truncate text-sm text-slate-500">{detail}</span>
+        </span>
+        {aside}
+        <ChevronRight size={18} className="shrink-0 text-slate-400" aria-hidden="true" />
+      </button>
+    </li>
   )
+}
+
+function CardMessage({ text }: { text: string }) {
+  return <li className="px-4 py-6 text-center text-sm text-slate-500">{text}</li>
 }
 
 export default Workspace
 
-export { Topbar }

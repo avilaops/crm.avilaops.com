@@ -1,3 +1,4 @@
+import { googleRedirectUri } from "./google-config.js";
 import { config } from "dotenv";
 import fastifyMultipart from "@fastify/multipart";
 import fastifyStatic from "@fastify/static";
@@ -7,7 +8,6 @@ import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, 
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import QRCode from "qrcode";
 import { z } from "zod";
 import { query } from "./db.js";
 import { ehMensagemDeAudio, transcreverEGravar } from "./transcricao.js";
@@ -24,6 +24,8 @@ import { registerSegmentRoutes } from "./routes-segments.js";
 import { registerMediaRoutes } from "./routes-media.js";
 import { registerTeamRoutes } from "./routes-team.js";
 import { registerSettingsRoutes } from "./routes-settings.js";
+import { registerAccountRoutes } from "./routes-account.js";
+import { signOAuthState, verifyOAuthState } from "./oauth-state.js";
 import {
   ERP_PROVIDER,
   ErpRequestError,
@@ -285,6 +287,21 @@ function cabecalhoCookieSessao(token: string) {
   return `${SESSION_COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_DAYS * 24 * 60 * 60}${secure}`;
 }
 const GOOGLE_PROVIDER = "google_calendar";
+
+/**
+ * Hash do token da sessão do pedido: separa "esta sessão" das outras em Minha
+ * conta e amarra o `state` do OAuth do Google.
+ *
+ * O `state` era o id do tenant e o retorno não pedia sessão: quem soubesse esse
+ * id ligava a própria conta Google à agenda da empresa alheia — e as tarefas
+ * passavam a ser copiadas para o calendário dela. Agora o retorno exige a mesma
+ * sessão (o cookie é SameSite=Lax, então vem na volta do Google) e o `state` só
+ * confere com ela; ver `oauth-state.ts`.
+ */
+function sessionHashFrom(cookieHeader?: string) {
+  const token = parseCookies(cookieHeader).get(SESSION_COOKIE);
+  return token ? hashToken(token) : null;
+}
 
 async function getMetaIntegration(tenantIdOverride?: string) {
   const tenantId = tenantIdOverride ?? (await getTenantId());
@@ -2251,46 +2268,26 @@ async function main() {
     return { received: true, processed };
   });
 
+  /**
+   * Conexao por QR Code (WhatsApp Web pela Evolution API): desativada.
+   *
+   * E um caminho que a Meta nao permite — vincular a conta a versoes nao
+   * oficiais "violates our Terms of Service" — e que pode custar o numero do
+   * cliente. Pior: quando a Evolution nao respondia, esta rota desenhava um QR
+   * falso, que nenhum celular conseguia ler, e deixava um canal parado em
+   * "connecting" para sempre (o unico registro de `channels` em producao era
+   * esse). A conexao oficial passa pela Messageria.
+   *
+   * Canais `qrcode`/`evolution` que ja existem continuam enviando — o roteamento
+   * do envio nao mudou; so nao se cria mais nenhum.
+   */
   app.post("/api/channels/qrcode/instance", async (request, reply) => {
     const user = await requireAuth(request, reply);
     if (!user) return;
-    const instanceName = `avila_whatsapp_${user.tenant_id.slice(0, 8)}`;
-    const evolutionApiUrl = process.env.EVOLUTION_API_URL ?? "http://localhost:8080";
-    const evolutionApiKey = process.env.EVOLUTION_API_KEY ?? "global-apikey";
-
-    let qrcodeBase64: string | null = null;
-    let status = "connecting";
-
-    try {
-      const evoResponse = await fetch(`${evolutionApiUrl}/instance/create`, {
-        method: "POST",
-        headers: { apikey: evolutionApiKey, "Content-Type": "application/json" },
-        body: JSON.stringify({ instanceName, qrcode: true, integration: "WHATSAPP-BAILEYS" }),
-      });
-      const evoData = (await evoResponse.json()) as { qrcode?: { base64?: string }; instance?: { status?: string } };
-      if (evoResponse.ok && evoData.qrcode?.base64) {
-        qrcodeBase64 = evoData.qrcode.base64;
-        status = evoData.instance?.status ?? "connecting";
-      }
-    } catch {
-      // Se a Evolution API estiver iniciando ou ambiente local, gera QR Code base64 SVG estilizado
-    }
-
-    if (!qrcodeBase64) {
-      const pairingString = `2@${Buffer.from(instanceName).toString("base64")},${user.tenant_id},${Date.now()}`;
-      qrcodeBase64 = await QRCode.toDataURL(pairingString, { width: 320, margin: 2, color: { dark: "#0f172a", light: "#ffffff" } });
-    }
-
-    const channelResult = await query<{ id: string }>(
-      `insert into channels (tenant_id, provider, external_id, display_name, phone_number, status, metadata, team_name, updated_at)
-       values ($1, 'qrcode', $2, 'WhatsApp Web QR', 'Aguardando leitura', $3, $4, 'Comercial', now())
-       on conflict (tenant_id, provider, external_id)
-       do update set status = excluded.status, metadata = channels.metadata || excluded.metadata, updated_at = now()
-       returning id`,
-      [user.tenant_id, instanceName, status, JSON.stringify({ instance_name: instanceName, qrcode: qrcodeBase64 })],
-    );
-
-    return { instanceName, qrcode: qrcodeBase64, status, channelId: channelResult.rows[0]?.id };
+    return reply.code(410).send({
+      error: "A conexao por QR Code foi desativada. Conecte o WhatsApp pela conexao oficial em Configuracoes > Canais > WhatsApp.",
+      code: "qrcode_disabled",
+    });
   });
 
   app.get("/api/channels/qrcode/status/:instanceName", async (request, reply) => {
@@ -2354,10 +2351,19 @@ async function main() {
   app.get("/api/integrations/google/auth-url", async (request, reply) => {
     const user = await requireAuth(request, reply);
     if (!user) return;
-    const clientId = process.env.GOOGLE_CLIENT_ID ?? "google-client-id-demo";
-    const redirectUri = `${process.env.PUBLIC_APP_URL ?? "http://localhost:3000"}/api/integrations/google/callback`;
-    const scopes = ["https://www.googleapis.com/auth/calendar.events", "https://www.googleapis.com/auth/userinfo.email"].join(" ");
-    const url = `https://accounts.google.com/o/oauth2/v2/auth?response_type=code&client_id=${encodeURIComponent(clientId)}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${encodeURIComponent(scopes)}&access_type=offline&prompt=consent&state=${user.tenant_id}`;
+    if (!canManage(user)) return reply.code(403).send({ error: "Permissao insuficiente." });
+    const clientId = process.env.GOOGLE_CLIENT_ID;
+    // Sem cliente configurado, a URL levava o navegador a uma tela de erro do
+    // Google com um client_id de demonstração. Melhor dizer aqui.
+    if (!clientId || !process.env.GOOGLE_CLIENT_SECRET || (process.env.ENCRYPTION_KEY?.length ?? 0) < 32) {
+      return reply.code(503).send({ error: "Google Agenda nao esta configurado neste ambiente.", code: "google_not_configured" });
+    }
+    const sessionHash = sessionHashFrom(request.headers.cookie);
+    if (!sessionHash) return reply.code(401).send({ error: "Autenticacao obrigatoria." });
+    const redirectUri = googleRedirectUri(process.env.PUBLIC_APP_URL, process.env.NODE_ENV === "production");
+    if (!redirectUri) return reply.code(503).send({ error: "PUBLIC_APP_URL invalida para Google Agenda.", code: "google_not_configured" });
+    const scopes = "https://www.googleapis.com/auth/calendar.events";
+    const url = `https://accounts.google.com/o/oauth2/v2/auth?response_type=code&client_id=${encodeURIComponent(clientId)}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${encodeURIComponent(scopes)}&access_type=offline&prompt=consent&state=${encodeURIComponent(signOAuthState(encryptionKey(), "google", sessionHash))}`;
     return { url };
   });
 
@@ -2371,6 +2377,7 @@ async function main() {
   app.post("/api/integrations/google/disconnect", async (request, reply) => {
     const user = await requireAuth(request, reply);
     if (!user) return;
+    if (!canManage(user)) return reply.code(403).send({ error: "Permissao insuficiente." });
     await query("delete from integrations where tenant_id = $1 and provider = $2", [user.tenant_id, GOOGLE_PROVIDER]);
     await recordEvent(user.tenant_id, "integration", "google_calendar.disconnected", {}, user.id, null, (request as RequestWithId).requestId);
     return { ok: true };
@@ -2380,9 +2387,22 @@ async function main() {
     const { code, state } = z.object({ code: z.string().optional(), state: z.string().optional() }).parse(request.query);
     if (!code || !state) return reply.code(400).send({ error: "Codigo ou estado invalido do Google OAuth." });
 
+    // A volta do Google precisa da mesma sessão que pediu a conexão; o tenant
+    // vem dela, nunca do `state`.
+    const user = await getSessionUser(request.headers.cookie);
+    const sessionHash = sessionHashFrom(request.headers.cookie);
+    if (!user || !sessionHash) return reply.redirect("/");
+    if ((process.env.ENCRYPTION_KEY?.length ?? 0) < 32) return reply.code(503).send({ error: "Google Agenda nao esta configurado neste ambiente.", code: "google_not_configured" });
+    if (!canManage(user) || !verifyOAuthState(encryptionKey(), "google", state, sessionHash)) {
+      await recordEvent(user.tenant_id, "integration", "google_calendar.callback_rejected", { reason: canManage(user) ? "state" : "permission" }, user.id);
+      return reply.redirect("/#/settings/integrations/");
+    }
+
     const clientId = process.env.GOOGLE_CLIENT_ID;
     const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
-    const redirectUri = `${process.env.PUBLIC_APP_URL ?? "http://localhost:3000"}/api/integrations/google/callback`;
+    if (!clientId || !clientSecret) return reply.code(503).send({ error: "Google Agenda nao esta configurado neste ambiente.", code: "google_not_configured" });
+    const redirectUri = googleRedirectUri(process.env.PUBLIC_APP_URL, process.env.NODE_ENV === "production");
+    if (!redirectUri) return reply.code(503).send({ error: "PUBLIC_APP_URL invalida para Google Agenda.", code: "google_not_configured" });
 
     try {
       const res = await fetch("https://oauth2.googleapis.com/token", {
@@ -2405,9 +2425,9 @@ async function main() {
            values ($1, $2, $3, $4, 'Conta Google Workspace', now(), now())
            on conflict (tenant_id, provider)
            do update set access_token = excluded.access_token, refresh_token = case when excluded.refresh_token <> '' then excluded.refresh_token else integrations.refresh_token end, updated_at = now()`,
-          [state, GOOGLE_PROVIDER, encryptedAccess, encryptedRefresh],
+          [user.tenant_id, GOOGLE_PROVIDER, encryptedAccess, encryptedRefresh],
         );
-        await recordEvent(state, "integration", "google_calendar.connected", {});
+        await recordEvent(user.tenant_id, "integration", "google_calendar.connected", {}, user.id);
       }
     } catch {
       // Registra evento de tentativa
@@ -2657,6 +2677,14 @@ async function main() {
   registerMediaRoutes(app, { requireAuth, recordEvent });
   registerTeamRoutes(app, { requireAuth, recordEvent });
   registerSettingsRoutes(app, requireAuth, recordEvent);
+  registerAccountRoutes(app, {
+    requireAuth,
+    recordEvent,
+    hashPassword,
+    verifyPassword,
+    checkRateLimit,
+    currentSessionHash: (request) => sessionHashFrom(request.headers.cookie),
+  });
   startAutomation({ decryptSecret, log: (mensagem, detalhe) => app.log.info({ detalhe }, mensagem) });
 
   if (existsSync(distDir)) {
@@ -2681,3 +2709,4 @@ main().catch((error) => {
   console.error(error);
   process.exit(1);
 });
+

@@ -196,11 +196,12 @@ export default function ProductsPage() {
             />
           </div>
 
-          <div className="flex items-center gap-2">
+          {/* Abaixo de 640px os filtros dividem a linha em vez de empurrar a tela para o lado. */}
+          <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:items-center">
             <select
               value={categoryFilter}
               onChange={(e) => setCategoryFilter(e.target.value)}
-              className="rounded-md border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-700 outline-none"
+              className="min-w-0 rounded-md border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-700 outline-none"
             >
               <option value="">Todas as Categorias</option>
               {categories.map((c) => (
@@ -213,7 +214,7 @@ export default function ProductsPage() {
             <select
               value={activeFilter}
               onChange={(e) => setActiveFilter(e.target.value as any)}
-              className="rounded-md border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-700 outline-none"
+              className="min-w-0 rounded-md border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-700 outline-none"
             >
               <option value="all">Status: Todos</option>
               <option value="true">Apenas Ativos</option>

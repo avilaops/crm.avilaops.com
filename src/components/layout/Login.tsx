@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { getSession, getSsoStatus, login } from '../../lib/auth'
+import { getSession, getSsoStatus, login, type SessionUser } from '../../lib/auth'
 
 /**
  * Porta de entrada do Agenda CRM.
@@ -14,7 +14,7 @@ import { getSession, getSsoStatus, login } from '../../lib/auth'
  * escrita à mão no código. Nós temos um espaço por pessoa, então esse passo
  * nunca teve o que escolher.
  */
-export default function Login({ onEnter }: { onEnter: () => void }) {
+export default function Login({ onEnter }: { onEnter: (user: SessionUser) => void }) {
   const [email, setEmail] = useState('')
   const [senha, setSenha] = useState('')
   const [erro, setErro] = useState('')
@@ -27,7 +27,7 @@ export default function Login({ onEnter }: { onEnter: () => void }) {
   useEffect(() => {
     getSession()
       .then((sessao) => {
-        if (sessao.user) onEnter()
+        if (sessao.user) onEnter(sessao.user)
       })
       .catch(() => undefined)
       .finally(() => setVerificando(false))
@@ -44,8 +44,9 @@ export default function Login({ onEnter }: { onEnter: () => void }) {
     setEnviando(true)
     setErro('')
     try {
-      await login(email, senha)
-      onEnter()
+      const sessao = await login(email, senha)
+      if (!sessao.user) throw 'Não foi possível abrir a sessão. Tente de novo.'
+      onEnter(sessao.user)
     } catch (falha) {
       setErro(String(falha))
       setEnviando(false)

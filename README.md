@@ -62,6 +62,14 @@ npm run db:migrate
 npm run validate
 ```
 
+`npm run validate` roda typecheck, lint, os testes do CLI, do backend e do
+front (`npm run test:web`: rotas, tabela de preço do WhatsApp, formatação e
+checklist de ativação) e o build.
+
+As telas nos tamanhos reais de uso (375, 390, 768, 1024 e 1440 px) são
+conferidas com a API simulada por `scripts/telas/verificar.mjs`, com o Vite
+rodando; o como está em [`docs/PLANO-MOBILE-E-CANAIS.md`](docs/PLANO-MOBILE-E-CANAIS.md#como-validar).
+
 ## Execução com backend
 
 ```powershell
@@ -128,7 +136,24 @@ O schema cria a base do CRM:
 - `channels`, `conversations`, `messages`
 - `tasks`, `integrations`, `events`
 
-## Integração Meta
+## WhatsApp
+
+Quem fala com a Meta é a Messageria (`sms.avilaops.com`); o CRM se liga a ela
+com a chave da conta, em **Configurações › Canais › WhatsApp › Configuração
+avançada**. A mesma tela mostra o estado da conexão, o que muda no celular e o
+preço da Meta em reais, com simulador. O porquê está em
+[`docs/INTEGRACAO-MESSAGERIA.md`](docs/INTEGRACAO-MESSAGERIA.md) e o plano da
+conexão oficial com Coexistência em
+[`docs/PLANO-MOBILE-E-CANAIS.md`](docs/PLANO-MOBILE-E-CANAIS.md).
+
+A conexão por QR Code (WhatsApp Web) foi desativada: é um caminho que a Meta não
+permite e pode custar o número do cliente.
+
+## Integração Meta (caminho antigo)
+
+O que segue é a conexão direta do app Meta do próprio CRM, que deixou de ser o
+caminho oficial e ficou sem tela. O código continua aqui até a integração pela
+Messageria estar comprovada em produção.
 
 O frontend chama `/api/meta`. O backend cria a URL OAuth, troca o código por token e salva credenciais/status no Postgres.
 

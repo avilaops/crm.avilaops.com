@@ -113,6 +113,11 @@ O `setNotFoundHandler` em `server.ts:2442` já serve `index.html` para tudo que
 não é `/api/*`. **A infraestrutura para history API já está pronta**; falta só o
 front deixar de ignorar o pathname.
 
+> **Corrigido em 02/10/2026.** `App.tsx` converte o caminho em hash
+> (`hashFromPathname`, em `src/routes.ts`) e devolve a barra para a raiz do app;
+> endereços antigos das Configurações são redirecionados (`legacyRedirects`), e
+> a conversa aberta no inbox tem endereço próprio (`/communications/inbox/<id>/`).
+
 ---
 
 ## Back-end

@@ -96,6 +96,15 @@ const updateKnowledgeSchema = z.object({
   active: z.boolean().optional(),
 })
 
+/**
+ * Configuração da área de trabalho vale para a empresa inteira: só
+ * administrador e gerente mudam. Ler continua aberto — o atendente precisa ver
+ * o horário de atendimento e a mensagem de boas-vindas que está valendo.
+ */
+function podeAdministrar(user: UserSession) {
+  return user.role === 'admin' || user.role === 'gerente' || user.role === 'manager'
+}
+
 export function registerSettingsRoutes(
   app: FastifyInstance,
   requireAuth: RequireAuth,
@@ -128,6 +137,7 @@ export function registerSettingsRoutes(
   app.patch('/api/settings', async (request, reply) => {
     const user = await requireAuth(request, reply)
     if (!user) return
+    if (!podeAdministrar(user)) return reply.code(403).send({ error: 'Permissao insuficiente.' })
 
     const body = updateSettingsSchema.parse(request.body)
 
@@ -232,6 +242,7 @@ export function registerSettingsRoutes(
   app.post('/api/knowledge', async (request, reply) => {
     const user = await requireAuth(request, reply)
     if (!user) return
+    if (!podeAdministrar(user)) return reply.code(403).send({ error: 'Permissao insuficiente.' })
 
     const body = createKnowledgeSchema.parse(request.body)
 
@@ -260,6 +271,7 @@ export function registerSettingsRoutes(
   app.patch('/api/knowledge/:id', async (request, reply) => {
     const user = await requireAuth(request, reply)
     if (!user) return
+    if (!podeAdministrar(user)) return reply.code(403).send({ error: 'Permissao insuficiente.' })
 
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params)
     const body = updateKnowledgeSchema.parse(request.body)
@@ -302,6 +314,7 @@ export function registerSettingsRoutes(
   app.delete('/api/knowledge/:id', async (request, reply) => {
     const user = await requireAuth(request, reply)
     if (!user) return
+    if (!podeAdministrar(user)) return reply.code(403).send({ error: 'Permissao insuficiente.' })
 
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params)
     const result = await query(

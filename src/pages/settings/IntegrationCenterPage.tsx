@@ -1,351 +1,339 @@
-import { useState } from 'react'
-import {
-  ArrowRight,
-  Calendar,
-  CreditCard,
-  Database,
-  MessageSquare,
-  Server,
-  ShieldCheck,
-  Workflow,
-  X,
-} from 'lucide-react'
-import { getGoogleAuthUrl } from '../../lib/googleCalendar'
+import { Calendar, CreditCard, Database, Mail, MessageCircle, Send, Workflow, type LucideIcon } from 'lucide-react'
+import { useEffect, useState, type FormEvent } from 'react'
+import { FormField, Notice, ToggleRow } from '../../components/ui/Form'
+import { Sheet } from '../../components/ui/Sheet'
+import { StatusBadge } from '../../components/ui/StatusBadge'
+import type { ConnectionState } from '../../lib/connection'
+import { ApiError, listChannels } from '../../lib/crm'
+import { disconnectGoogleIntegration, getGoogleAuthUrl, getGoogleIntegrationStatus } from '../../lib/googleCalendar'
+import { connectErp, disconnectErp, getErpStatus, type ErpStatus } from '../../lib/integrations'
+import { getMailAccount } from '../../lib/mail'
+import { getMessageriaStatus, type MessageriaStatus } from '../../lib/messageria'
+import { useNavigation } from '../../lib/navigationContext'
+import { buttonClass } from '../../lib/ui'
+import { describeWhatsAppConnection } from '../../lib/whatsappConnection'
+import type { Page } from '../../types'
+import { SettingsFrame } from './SettingsFrame'
 
+type Kind = 'channel' | 'integration'
+type Filter = 'all' | Kind
+
+type Item = {
+  id: string
+  kind: Kind
+  name: string
+  description: string
+  icon: LucideIcon
+  state: ConnectionState | null
+  /** Texto do selo quando o estado padrão não diz o suficiente. */
+  stateLabel?: string
+  onOpen?: () => void
+}
+
+/**
+ * Central de integrações: um catálogo só, com estado real de cada conexão.
+ *
+ * O que estava aqui gravava chave de API do ERP, do n8n e token da Twilio no
+ * `localStorage` do navegador — legível por qualquer script da página — e
+ * mostrava "Ativo" para o n8n sempre (`!!chave || true`) e para três gateways
+ * de pagamento que o servidor nunca teve. Agora cada estado vem do servidor, e
+ * segredo só sobe: fica cifrado lá e nunca volta para a tela.
+ */
 export default function IntegrationCenterPage() {
-  const [modalIntegration, setModalIntegration] = useState<string | null>(null)
+  const { navigate } = useNavigation()
+  const [filter, setFilter] = useState<Filter>('all')
+  const [messageria, setMessageria] = useState<MessageriaStatus | null>(null)
+  const [whatsapp, setWhatsapp] = useState<ConnectionState | null>(null)
+  const [mail, setMail] = useState<ConnectionState | null>(null)
+  const [erp, setErp] = useState<ErpStatus | null>(null)
+  const [google, setGoogle] = useState<{ connected: boolean; email?: string } | null>(null)
+  const [erpOpen, setErpOpen] = useState(false)
+  const [feedback, setFeedback] = useState<{ tone: 'success' | 'danger' | 'warning'; text: string } | null>(null)
+  const [version, setVersion] = useState(0)
+  const reload = () => setVersion((value) => value + 1)
 
-  const [n8nUrl, setN8nUrl] = useState(() => localStorage.getItem('avila_n8n_url') || 'https://n8n.avilaops.com')
-  const [n8nKey, setN8nKey] = useState(() => localStorage.getItem('avila_n8n_key') || '')
-  const [erpUrl, setErpUrl] = useState(() => localStorage.getItem('avila_erp_url') || 'https://erp.avilaops.com/api')
-  const [erpKey, setErpKey] = useState(() => localStorage.getItem('avila_erp_key') || '')
-  const [twilioSid, setTwilioSid] = useState(() => localStorage.getItem('avila_twilio_sid') || '')
-  const [twilioToken, setTwilioToken] = useState(() => localStorage.getItem('avila_twilio_token') || '')
+  useEffect(() => {
+    let active = true
+    Promise.allSettled([getMessageriaStatus(), listChannels(), getErpStatus(), getGoogleIntegrationStatus(), getMailAccount()]).then(
+      ([status, channels, erpStatus, googleStatus, mailAccount]) => {
+        if (!active) return
+        const messageriaStatus = status.status === 'fulfilled' ? status.value : null
+        setMessageria(messageriaStatus)
+        setWhatsapp(describeWhatsAppConnection(messageriaStatus, channels.status === 'fulfilled' ? channels.value.channels : []).state)
+        setErp(erpStatus.status === 'fulfilled' ? erpStatus.value : null)
+        setGoogle(googleStatus.status === 'fulfilled' ? googleStatus.value : null)
+        setMail(mailAccount.status === 'fulfilled' ? (!mailAccount.value.account ? 'disconnected' : mailAccount.value.account.lastError ? 'error' : 'connected') : null)
+      },
+    )
+    return () => {
+      active = false
+    }
+  }, [version])
 
-  const [savedMsg, setSavedMsg] = useState('')
-
-  const handleSaveConfigs = (e: React.FormEvent) => {
-    e.preventDefault()
-    localStorage.setItem('avila_n8n_url', n8nUrl)
-    localStorage.setItem('avila_n8n_key', n8nKey)
-    localStorage.setItem('avila_erp_url', erpUrl)
-    localStorage.setItem('avila_erp_key', erpKey)
-    localStorage.setItem('avila_twilio_sid', twilioSid)
-    localStorage.setItem('avila_twilio_token', twilioToken)
-
-    setSavedMsg('Configurações salvas localmente com sucesso!')
-    setTimeout(() => {
-      setSavedMsg('')
-      setModalIntegration(null)
-    }, 1500)
+  async function connectGoogle() {
+    setFeedback(null)
+    try {
+      const { url } = await getGoogleAuthUrl()
+      window.location.href = url
+    } catch (error) {
+      setFeedback({
+        tone: error instanceof ApiError && error.code === 'google_not_configured' ? 'warning' : 'danger',
+        text: error instanceof Error ? error.message : 'Não foi possível abrir o Google.',
+      })
+    }
   }
 
-  const integrations = [
+  async function toggleGoogle() {
+    if (!google?.connected) return connectGoogle()
+    if (!window.confirm('Desconectar o Google Agenda? As tarefas deixam de ir para a agenda.')) return
+    try {
+      await disconnectGoogleIntegration()
+      setFeedback({ tone: 'success', text: 'Google Agenda desconectado.' })
+      reload()
+    } catch (error) {
+      setFeedback({ tone: 'danger', text: error instanceof Error ? error.message : 'Não foi possível desconectar.' })
+    }
+  }
+
+  const go = (page: Page) => () => navigate(page)
+  const messageriaState: ConnectionState | null = messageria === null ? null : !messageria.connected ? 'disconnected' : messageria.erro ? 'error' : 'connected'
+
+  const items: Item[] = [
+    { id: 'whatsapp', kind: 'channel', name: 'WhatsApp', description: 'Conversas com clientes pela conexão oficial', icon: MessageCircle, state: whatsapp, onOpen: go('whatsapp-channel') },
+    { id: 'email', kind: 'channel', name: 'E-mail', description: 'Caixa de entrada e envio da newsletter', icon: Mail, state: mail, onOpen: go('mail-settings') },
     {
-      id: 'n8n',
-      name: 'n8n Automation Engine',
-      category: 'Automação & Webhooks',
-      description: 'Dispare réguas de automação, fluxos inteligentes e integração com bots no n8n.',
-      icon: Workflow,
-      iconBg: 'bg-orange-500',
-      connected: !!n8nKey || true,
-      badge: 'Prioritário',
-      badgeColor: 'bg-orange-100 text-orange-800',
-    },
-    {
-      id: 'meta',
-      name: 'Meta WhatsApp & Instagram',
-      category: 'Mensageiros Oficiais',
-      description: 'API oficial do WhatsApp Cloud e Direct do Instagram com templates aprovados.',
-      icon: MessageSquare,
-      iconBg: 'bg-emerald-500',
-      connected: true,
-      badge: 'Oficial',
-      badgeColor: 'bg-emerald-100 text-emerald-800',
+      id: 'messageria',
+      kind: 'integration',
+      name: 'Messageria Ávila Ops',
+      description: 'Quem entrega o WhatsApp: janela de 24h, modelos e custo',
+      icon: Send,
+      state: messageriaState,
+      onOpen: go('whatsapp-channel'),
     },
     {
       id: 'erp',
-      name: 'ERP Ávila Ops (erp.avilaops.com)',
-      category: 'Gestão Financeira & Pedidos',
-      description: 'Sincronize clientes ganhos, pedidos e emissão de notas com o ecossistema Ávila Ops.',
+      kind: 'integration',
+      name: 'ERP Ávila Ops',
+      description: 'Clientes, pedidos e pagamentos na linha do tempo do contato',
       icon: Database,
-      iconBg: 'bg-blue-600',
-      connected: !!erpKey,
-      badge: 'Nativo',
-      badgeColor: 'bg-blue-100 text-blue-800',
-    },
-    {
-      id: 'twilio',
-      name: 'Twilio (SMS & Fallback WhatsApp)',
-      category: 'Telefonia & Notificações',
-      description: 'Envio de SMS transacional e rota de contingência para alertas operacionais.',
-      icon: Server,
-      iconBg: 'bg-rose-500',
-      connected: !!twilioSid,
-      badge: 'Stack Ávila',
-      badgeColor: 'bg-rose-100 text-rose-800',
+      state: erp === null ? null : erp.connected ? 'connected' : 'disconnected',
+      onOpen: () => setErpOpen(true),
     },
     {
       id: 'google',
-      name: 'Google Calendar (Agenda)',
-      category: 'Produtividade',
-      description: 'Sincronização de reuniões comerciais, tarefas e follow-ups na sua Google Agenda.',
+      kind: 'integration',
+      name: 'Google Agenda',
+      description: google?.connected && google.email ? `Tarefas na agenda de ${google.email}` : 'Tarefas e reuniões na sua agenda do Google',
       icon: Calendar,
-      iconBg: 'bg-indigo-600',
-      connected: false,
-      badge: 'OAuth2',
-      badgeColor: 'bg-indigo-100 text-indigo-800',
+      state: google === null ? null : google.connected ? 'connected' : 'disconnected',
+      onOpen: () => void toggleGoogle(),
     },
     {
-      id: 'gateways',
-      name: 'Gateways de Pagamento (Éfi & MP)',
-      category: 'Cobrança & Pix',
-      description: 'Cobrança com Pix instantâneo, QR Code e links de pagamento via Éfi e Mercado Pago.',
+      id: 'n8n',
+      kind: 'integration',
+      name: 'n8n',
+      description: 'Cada automação chama o seu fluxo do n8n por webhook',
+      icon: Workflow,
+      state: 'disconnected',
+      stateLabel: 'Por automação',
+      onOpen: go('automations'),
+    },
+    {
+      id: 'pagamentos',
+      kind: 'integration',
+      name: 'Pagamentos',
+      description: 'Link de pagamento na conversa e status no negócio (Mercado Pago, Pix)',
       icon: CreditCard,
-      iconBg: 'bg-teal-600',
-      connected: true,
-      badge: '3 Gateways',
-      badgeColor: 'bg-teal-100 text-teal-800',
+      state: 'soon',
     },
   ]
 
+  const visible = items.filter((item) => filter === 'all' || item.kind === filter)
+  const filters: { id: Filter; label: string }[] = [
+    { id: 'all', label: 'Todas' },
+    { id: 'channel', label: 'Canais' },
+    { id: 'integration', label: 'Integrações' },
+  ]
+
   return (
-    <div>
-      <div className="flex h-16 items-center justify-between border-b border-slate-200 bg-white px-6">
-        <div>
-          <h2 className="text-base font-bold text-slate-900">Central de Integrações Ávila Ops</h2>
-          <p className="text-xs text-slate-400">Conecte seus serviços de automação, mensageria e ERP.</p>
-        </div>
-      </div>
-
-      <div className="space-y-6 p-6">
-        {/* Banner de Boas Práticas da Stack */}
-        <div className="rounded-xl border border-blue-200 bg-blue-50/60 p-4">
-          <div className="flex items-start gap-3">
-            <div className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-blue-600 text-white font-bold">
-              <ShieldCheck size={16} />
-            </div>
-            <div>
-              <h4 className="text-xs font-bold text-blue-900">Padrão de Integração Homologado Ávila Ops</h4>
-              <p className="text-xs text-blue-800/80 mt-0.5 leading-relaxed">
-                Prioridade operacional: <strong>n8n</strong> para fluxos e réguas de relacionamento, <strong>Meta Cloud API</strong> e <strong>Twilio</strong> para mensagens, e faturamento via <strong>Éfi, Mercado Pago e PayPal</strong>.
-              </p>
-            </div>
-          </div>
+    <SettingsFrame page="integrations" title="Integrações" description="Canais trazem conversas; integrações trocam dados com outros sistemas da empresa.">
+      <div className="space-y-4">
+        <div className="scroll-chips -mx-4 flex gap-2 px-4" role="group" aria-label="Filtrar">
+          {filters.map((option) => (
+            <button
+              key={option.id}
+              type="button"
+              aria-pressed={filter === option.id}
+              onClick={() => setFilter(option.id)}
+              className={`inline-flex min-h-11 shrink-0 items-center rounded-full border px-4 text-sm font-medium ${
+                filter === option.id ? 'border-blue-600 bg-blue-50 text-blue-700' : 'border-slate-200 bg-white text-slate-600'
+              }`}
+            >
+              {option.label}
+            </button>
+          ))}
         </div>
 
-        {/* Grid de Cards de Integrações */}
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {integrations.map((item) => {
+        {feedback && <Notice tone={feedback.tone}>{feedback.text}</Notice>}
+
+        <ul className="divide-y divide-slate-100 rounded-xl border border-slate-200 bg-white">
+          {visible.map((item) => {
             const Icon = item.icon
+            const content = (
+              <>
+                <span className="grid size-10 shrink-0 place-items-center rounded-lg bg-slate-100 text-slate-700">
+                  <Icon size={20} aria-hidden="true" />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block font-medium text-slate-900">{item.name}</span>
+                  <span className="block text-sm leading-snug text-slate-500">{item.description}</span>
+                </span>
+                {item.state ? <StatusBadge state={item.state} label={item.stateLabel} /> : <span className="text-xs text-slate-400">…</span>}
+              </>
+            )
             return (
-              <div
-                key={item.id}
-                className="flex flex-col justify-between rounded-xl border border-slate-200 bg-white p-5 shadow-sm hover:border-slate-300 transition"
-              >
-                <div>
-                  <div className="flex items-start justify-between">
-                    <div className={`grid h-11 w-11 place-items-center rounded-xl text-white ${item.iconBg}`}>
-                      <Icon size={22} />
-                    </div>
-                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${item.badgeColor}`}>
-                      {item.badge}
-                    </span>
-                  </div>
-
-                  <h3 className="mt-4 text-xs font-bold text-slate-900">{item.name}</h3>
-                  <span className="text-[11px] font-semibold text-slate-400">{item.category}</span>
-                  <p className="mt-2 text-xs text-slate-600 leading-relaxed">{item.description}</p>
-                </div>
-
-                <div className="mt-5 flex items-center justify-between border-t border-slate-100 pt-3">
-                  <div className="flex items-center gap-1.5 text-[11px] font-bold">
-                    <span className={`h-2 w-2 rounded-full ${item.connected ? 'bg-emerald-500' : 'bg-slate-300'}`} />
-                    <span className={item.connected ? 'text-emerald-700' : 'text-slate-500'}>
-                      {item.connected ? 'Ativo' : 'Não configurado'}
-                    </span>
-                  </div>
-
-                  <button
-                    className="flex items-center gap-1 text-xs font-bold text-blue-600 hover:text-blue-700 hover:underline"
-                    onClick={() => {
-                      if (item.id === 'google') {
-                        getGoogleAuthUrl()
-                          .then((res) => {
-                            window.location.href = res.url
-                          })
-                          .catch(() => alert('Configure GOOGLE_CLIENT_ID e GOOGLE_CLIENT_SECRET no servidor.'))
-                      } else {
-                        setModalIntegration(item.id)
-                      }
-                    }}
-                  >
-                    <span>Configurar</span>
-                    <ArrowRight size={13} />
+              <li key={item.id}>
+                {item.onOpen ? (
+                  <button type="button" onClick={item.onOpen} className="flex min-h-16 w-full items-center gap-3 px-4 py-3 text-left transition hover:bg-slate-50">
+                    {content}
                   </button>
-                </div>
-              </div>
+                ) : (
+                  <div className="flex min-h-16 items-center gap-3 px-4 py-3">{content}</div>
+                )}
+              </li>
             )
           })}
-        </div>
+        </ul>
       </div>
 
-      {/* Modal de Configuração de Integração */}
-      {modalIntegration && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-lg rounded-xl bg-white p-6 shadow-2xl">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <h3 className="text-base font-bold text-slate-900">
-                Configurar {integrations.find((i) => i.id === modalIntegration)?.name}
-              </h3>
-              <button className="text-slate-400 hover:text-slate-600" onClick={() => setModalIntegration(null)}>
-                <X size={18} />
+      <ErpSheet
+        open={erpOpen}
+        status={erp}
+        onClose={() => setErpOpen(false)}
+        onChanged={(text) => {
+          setFeedback({ tone: 'success', text })
+          setErpOpen(false)
+          reload()
+        }}
+      />
+    </SettingsFrame>
+  )
+}
+
+function ErpSheet({ open, status, onClose, onChanged }: { open: boolean; status: ErpStatus | null; onClose: () => void; onChanged: (message: string) => void }) {
+  const [form, setForm] = useState({ baseUrl: 'https://erp.avilaops.com', apiKey: '', webhookSecret: '', erpTenantId: '', createMissingContacts: true, autoWinLeadOnOrder: false })
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const webhookUrl = `${window.location.origin}/api/integrations/erp/webhook`
+
+  async function submit(event: FormEvent) {
+    event.preventDefault()
+    setBusy(true)
+    setError('')
+    try {
+      await connectErp({
+        baseUrl: form.baseUrl.trim(),
+        apiKey: form.apiKey.trim(),
+        webhookSecret: form.webhookSecret.trim(),
+        erpTenantId: form.erpTenantId.trim(),
+        settings: { createMissingContacts: form.createMissingContacts, autoWinLeadOnOrder: form.autoWinLeadOnOrder },
+      })
+      setForm((current) => ({ ...current, apiKey: '', webhookSecret: '' }))
+      onChanged('ERP conectado.')
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Não foi possível conectar o ERP.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function disconnect() {
+    if (!window.confirm('Desconectar o ERP? Os vínculos com os contatos ficam guardados para quando reconectar.')) return
+    setBusy(true)
+    try {
+      await disconnectErp()
+      onChanged('ERP desconectado.')
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Não foi possível desconectar.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const connected = Boolean(status?.connected)
+
+  return (
+    <Sheet open={open} onClose={onClose} title="ERP Ávila Ops" description="Cliente, pedido e pagamento do ERP aparecem na linha do tempo do contato.">
+      <div className="space-y-4 text-sm text-slate-700">
+        {error && <Notice tone="danger">{error}</Notice>}
+        {connected && status ? (
+          <>
+            <dl className="grid gap-2 rounded-lg border border-slate-200 p-3">
+              <div className="flex flex-wrap justify-between gap-2">
+                <dt className="text-slate-500">Endereço</dt>
+                <dd className="break-all font-medium text-slate-900">{status.baseUrl}</dd>
+              </div>
+              <div className="flex flex-wrap justify-between gap-2">
+                <dt className="text-slate-500">Eventos esperando processamento</dt>
+                <dd className="font-medium text-slate-900">{status.pendingEvents}</dd>
+              </div>
+              {Object.entries(status.links).map(([entity, total]) => (
+                <div key={entity} className="flex flex-wrap justify-between gap-2">
+                  <dt className="text-slate-500">Vínculos de {entity}</dt>
+                  <dd className="font-medium text-slate-900">{total}</dd>
+                </div>
+              ))}
+            </dl>
+            <button type="button" className={buttonClass.danger} disabled={busy} onClick={disconnect}>
+              {busy ? 'Desconectando…' : 'Desconectar o ERP'}
+            </button>
+          </>
+        ) : (
+          <form onSubmit={submit} className="grid gap-4">
+            <p>
+              Gere uma chave de API e a assinatura de webhook no ERP, em Integrações › Chaves. No ERP, cadastre este endereço de entrega:
+            </p>
+            <code className="block break-all rounded-lg bg-slate-100 px-3 py-2 font-mono text-xs text-slate-800">{webhookUrl}</code>
+            <FormField label="Endereço do ERP">
+              <input className="input" type="url" inputMode="url" autoCapitalize="none" required value={form.baseUrl} onChange={(event) => setForm({ ...form, baseUrl: event.target.value })} />
+            </FormField>
+            <FormField label="Chave de API">
+              <input className="input font-mono" type="password" autoComplete="off" spellCheck={false} required minLength={10} value={form.apiKey} onChange={(event) => setForm({ ...form, apiKey: event.target.value })} />
+            </FormField>
+            <FormField label="Segredo da assinatura de webhook">
+              <input className="input font-mono" type="password" autoComplete="off" spellCheck={false} required minLength={10} value={form.webhookSecret} onChange={(event) => setForm({ ...form, webhookSecret: event.target.value })} />
+            </FormField>
+            <FormField label="ID da conta no ERP" hint="O identificador (UUID) da empresa no ERP.">
+              <input
+                className="input font-mono"
+                autoCapitalize="none"
+                spellCheck={false}
+                required
+                pattern="[0-9a-fA-F-]{36}"
+                value={form.erpTenantId}
+                onChange={(event) => setForm({ ...form, erpTenantId: event.target.value })}
+              />
+            </FormField>
+            <ToggleRow
+              checked={form.createMissingContacts}
+              onChange={(createMissingContacts) => setForm({ ...form, createMissingContacts })}
+              title="Criar contato quando o ERP mandar um cliente novo"
+            />
+            <ToggleRow
+              checked={form.autoWinLeadOnOrder}
+              onChange={(autoWinLeadOnOrder) => setForm({ ...form, autoWinLeadOnOrder })}
+              title="Fechar o negócio quando o pedido for confirmado"
+              description="Desligado por padrão: nem todo pedido nasce de um negócio do funil."
+            />
+            <p className="text-xs text-slate-500">A chave e o segredo ficam cifrados no servidor e não voltam para o navegador.</p>
+            <div>
+              <button type="submit" className={buttonClass.primary} disabled={busy}>
+                {busy ? 'Conectando…' : 'Conectar o ERP'}
               </button>
             </div>
-
-            {savedMsg && (
-              <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-xs font-semibold text-emerald-700">
-                {savedMsg}
-              </div>
-            )}
-
-            <form onSubmit={handleSaveConfigs} className="mt-4 space-y-4">
-              {modalIntegration === 'n8n' && (
-                <>
-                  <div>
-                    <label className="block text-xs font-bold uppercase tracking-wider text-slate-700">
-                      URL da Instância n8n
-                    </label>
-                    <input
-                      type="url"
-                      value={n8nUrl}
-                      onChange={(e) => setN8nUrl(e.target.value)}
-                      className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-xs font-mono outline-none focus:border-blue-600"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-bold uppercase tracking-wider text-slate-700">
-                      API Key do n8n (Opcional)
-                    </label>
-                    <input
-                      type="password"
-                      placeholder="n8n_api_..."
-                      value={n8nKey}
-                      onChange={(e) => setN8nKey(e.target.value)}
-                      className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-xs font-mono outline-none focus:border-blue-600"
-                    />
-                  </div>
-                  <div className="rounded-lg bg-slate-50 p-3 text-[11px] text-slate-500">
-                    💡 Para criar gatilhos automatizados que enviam dados para o seu n8n, utilize a aba <strong>Automações</strong> no menu lateral.
-                  </div>
-                </>
-              )}
-
-              {modalIntegration === 'erp' && (
-                <>
-                  <div>
-                    <label className="block text-xs font-bold uppercase tracking-wider text-slate-700">
-                      Endpoint API do ERP Ávila Ops
-                    </label>
-                    <input
-                      type="url"
-                      value={erpUrl}
-                      onChange={(e) => setErpUrl(e.target.value)}
-                      className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-xs font-mono outline-none focus:border-blue-600"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-bold uppercase tracking-wider text-slate-700">
-                      Chave de Acesso / Token ERP
-                    </label>
-                    <input
-                      type="password"
-                      placeholder="erp_sec_..."
-                      value={erpKey}
-                      onChange={(e) => setErpKey(e.target.value)}
-                      className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-xs font-mono outline-none focus:border-blue-600"
-                    />
-                  </div>
-                </>
-              )}
-
-              {modalIntegration === 'twilio' && (
-                <>
-                  <div>
-                    <label className="block text-xs font-bold uppercase tracking-wider text-slate-700">
-                      Twilio Account SID
-                    </label>
-                    <input
-                      type="text"
-                      placeholder="AC..."
-                      value={twilioSid}
-                      onChange={(e) => setTwilioSid(e.target.value)}
-                      className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-xs font-mono outline-none focus:border-blue-600"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-bold uppercase tracking-wider text-slate-700">
-                      Twilio Auth Token
-                    </label>
-                    <input
-                      type="password"
-                      placeholder="token..."
-                      value={twilioToken}
-                      onChange={(e) => setTwilioToken(e.target.value)}
-                      className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-xs font-mono outline-none focus:border-blue-600"
-                    />
-                  </div>
-                </>
-              )}
-
-              {modalIntegration === 'meta' && (
-                <div className="space-y-3 text-xs text-slate-600">
-                  <p>
-                    As credenciais do <strong>Meta WhatsApp Cloud API</strong> e <strong>Instagram</strong> são gerenciadas de forma centralizada e segura no servidor.
-                  </p>
-                  <p>
-                    Acesse a seção <strong>Fontes de Lead</strong> ou <strong>Canais Meta</strong> para sincronizar números autorizados e gerenciar webhooks.
-                  </p>
-                </div>
-              )}
-
-              {modalIntegration === 'gateways' && (
-                <div className="space-y-3 text-xs text-slate-600">
-                  <p>
-                    Os pagamentos e checkouts são processados pelos 3 gateways oficiais: <strong>Éfi Pay</strong>, <strong>Mercado Pago</strong> e <strong>PayPal</strong>.
-                  </p>
-                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-                    <p className="font-bold text-slate-800">Status dos Gateways:</p>
-                    <ul className="mt-1 space-y-1 text-slate-600">
-                      <li>✔ <strong>Éfi Pay:</strong> Pix imediato com conciliação bancária ativa.</li>
-                      <li>✔ <strong>Mercado Pago:</strong> Pix e Cartão de Crédito até 12x ativos.</li>
-                      <li>✔ <strong>PayPal:</strong> Checkout internacional ativo.</li>
-                    </ul>
-                  </div>
-                </div>
-              )}
-
-              <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
-                <button
-                  type="button"
-                  className="rounded-lg border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50"
-                  onClick={() => setModalIntegration(null)}
-                >
-                  Fechar
-                </button>
-                {modalIntegration !== 'meta' && modalIntegration !== 'gateways' && (
-                  <button
-                    type="submit"
-                    className="rounded-lg bg-blue-600 px-5 py-2 text-xs font-bold uppercase tracking-wider text-white hover:bg-blue-700"
-                  >
-                    Salvar Configurações
-                  </button>
-                )}
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-    </div>
+          </form>
+        )}
+      </div>
+    </Sheet>
   )
 }

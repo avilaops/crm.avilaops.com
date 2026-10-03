@@ -152,11 +152,12 @@ export default function MediaPage() {
             />
           </div>
 
-          <div className="flex items-center gap-2">
+          {/* Abaixo de 640px os filtros dividem a linha em vez de empurrar a tela para o lado. */}
+          <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:items-center">
             <select
               value={selectedCategory}
               onChange={(e) => setSelectedCategory(e.target.value)}
-              className="rounded-md border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-700 outline-none"
+              className="min-w-0 rounded-md border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-700 outline-none"
             >
               <option value="">Todas as Categorias</option>
               {categories.map((c) => (
@@ -169,7 +170,7 @@ export default function MediaPage() {
             <select
               value={selectedType}
               onChange={(e) => setSelectedType(e.target.value)}
-              className="rounded-md border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-700 outline-none"
+              className="min-w-0 rounded-md border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-700 outline-none"
             >
               <option value="">Todos os Tipos</option>
               <option value="pdf">PDFs / Propostas</option>
