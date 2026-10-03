@@ -1,0 +1,19 @@
+# O contexto do build é uma lista do que entra, não do que sai. Arquivo novo
+# fica de fora até ser incluído aqui: assim um .env.local, uma chave ou um dump
+# esquecidos na pasta nunca viram camada de uma imagem publicada no GHCR.
+*
+!package.json
+!package-lock.json
+!packages/cli
+!index.html
+!public
+!src
+!backend
+!vite.config.ts
+!tsconfig*.json
+!scripts/iniciar-container.sh
+
+# Nem dentro das pastas incluídas.
+**/node_modules
+**/.env*
+**/*.local

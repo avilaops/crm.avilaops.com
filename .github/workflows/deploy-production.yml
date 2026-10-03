@@ -1,4 +1,8 @@
 name: Build e deploy
+
+# O mesmo pipeline do app.avilaops.com, com os dados do CRM: valida, constrói a
+# imagem pelo workflow compartilhado do avilaops/infra e, na main, implanta pelo
+# despachante do servidor. Passo a passo da ativação em docs/OPERACAO.md.
 on:
   push:
     branches: [main]
@@ -12,42 +16,46 @@ jobs:
     name: Validar lint, tipos e testes
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    env:
-      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:55433/cliente_portal_test?schema=public
+    services:
+      postgres:
+        # A mesma versão do agenda-crm-db em produção.
+        image: postgres:18.6-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: agenda_crm_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d agenda_crm_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: 24
           cache: npm
       - run: npm ci
-      - run: npx prisma generate
-      - run: npm run lint
-      # O projeto passou de 2 GB de heap no `tsc` e o runner derrubava o job
-      # com "JavaScript heap out of memory" — exit 134, sem nenhum erro de
-      # tipo na saída, o que faz o job parecer uma reprovação de tipagem.
-      # 6 GB cabe folgado no runner de 16 GB e dá margem para o projeto crescer.
-      - run: npx tsc --noEmit
+      # Typecheck, lint, testes (CLI, backend e web) e build.
+      - run: npm run validate
+      - name: Aplicar o schema duas vezes no banco descartável
+        # A imagem aplica o schema a cada início de container, porque o
+        # despachante do servidor não tem etapa de migração. Então ele precisa
+        # ser idempotente: a segunda passada pega um `create table` sem
+        # `if not exists` aqui, e não num deploy que volta sozinho para trás.
         env:
-          NODE_OPTIONS: --max-old-space-size=6144
-      - name: Subir banco descartável
-        run: docker compose -f docker-compose.test.yml up -d --wait
-      - name: Criar papel exigido pelas migrações
-        # A migração 20260904190000_add_estudio_module faz ALTER TABLE ...
-        # OWNER TO app_avila, que existe em produção mas não neste banco
-        # descartável. Sem isto, toda migração após 04/09 falha aqui — o
-        # build e o deploy ficam pulados (skipped) em silêncio, e ninguém
-        # percebe porque o job aparece só como "failure", não "deploy quebrado".
-        run: docker compose -f docker-compose.test.yml exec -T db-test psql -U postgres -d cliente_portal_test -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='app_avila') THEN CREATE ROLE app_avila; END IF; END \$\$;"
-      - name: Aplicar migrações no banco de teste
-        run: npx prisma migrate deploy
-      - name: Executar suíte completa
-        run: npm test
-      - name: Derrubar banco de teste
-        if: always()
-        run: docker compose -f docker-compose.test.yml down -v
+          DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/agenda_crm_test
+        run: |
+          npm run db:migrate
+          npm run db:migrate
+      - name: Conferir o pacote do CLI
+        run: npm run cli:pack
+      - run: npm ci --prefix worker
+      - run: npm run worker:typecheck
   image:
     needs: verify
     permissions:
@@ -56,6 +64,11 @@ jobs:
     uses: avilaops/infra/.github/workflows/container.yml@5e560f44062c8e025ddcfd86197e5394b562deae
     with:
       publish: ${{ github.event_name != 'pull_request' }}
+      # Variáveis do repositório, não secrets: o Vite grava estes valores no
+      # JavaScript que o navegador baixa.
+      build-args: |
+        VITE_SUPORTE_WHATSAPP=${{ vars.VITE_SUPORTE_WHATSAPP }}
+        VITE_SUPORTE_EMAIL=${{ vars.VITE_SUPORTE_EMAIL }}
   deploy:
     permissions:
       contents: read
@@ -64,7 +77,7 @@ jobs:
     if: github.event_name != 'pull_request' && vars.DEPLOY_ENABLED == 'true'
     uses: avilaops/infra/.github/workflows/deploy-ssh.yml@5e560f44062c8e025ddcfd86197e5394b562deae
     with:
-      application: app.avilaops.com
+      application: crm.avilaops.com
       image: ${{ needs.image.outputs.image }}
     secrets:
       DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}

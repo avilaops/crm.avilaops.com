@@ -106,14 +106,9 @@ npm run cli -- env check --mode local
 
 A referencia completa esta em [`docs/CLI-E-NPM.md`](docs/CLI-E-NPM.md).
 
-## Deploy com Docker
+## Deploy
 
-Em produção, use uma stack isolada:
-
-```powershell
-docker compose --env-file .env.production.local -f docker-compose.production.yml up -d --build
-docker compose --env-file .env.production.local -f docker-compose.production.yml exec app npm run db:migrate
-```
+Todo push na `main` passa pelo pipeline da plataforma ([`.github/workflows/deploy-production.yml`](.github/workflows/deploy-production.yml)): valida, constrói a imagem e, com o deploy ligado, implanta pelo despachante do `avilaops/infra`, que volta à versão anterior sozinho se a nova não responder. Como ligar, o que o servidor precisa e como desfazer: [`docs/OPERACAO.md`](docs/OPERACAO.md).
 
 O app expõe apenas `127.0.0.1:3020` no host. O Postgres fica somente na rede Docker `agenda-crm`.
 
