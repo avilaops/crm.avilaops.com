@@ -1,0 +1,46 @@
+# Producao do CRM (crm.avilaops.com), em /opt/crm-avilaops-com no servidor
+# applications. Segue a Norma de Plataforma (avilaops/infra, NORMA-PLATAFORMA.md):
+# todo nome sai do dominio e nenhuma porta e publicada no host.
+#
+# Sobe so a aplicacao. O banco e o PostgreSQL compartilhado do servidor (banco e
+# role `crm_avilaops_com`), alcancado por host.docker.internal e coberto pelo
+# backup diario de la.
+name: crm-avilaops-com
+
+services:
+  web:
+    # O deploy troca esta linha pela imagem do commit, por digest
+    # (/var/lib/avilaops/deploy/crm.avilaops.com/image.yml).
+    image: ghcr.io/avilaops/crm.avilaops.com:latest
+    container_name: crm-avilaops-com-web
+    restart: unless-stopped
+    # Sem `command:`: o CMD da imagem aplica o schema antes de subir o servidor.
+    env_file: [.env]
+    # O Node roda como PID 1 e nao trata SIGTERM; sem isto cada troca de
+    # container espera 10 s pelo SIGKILL.
+    init: true
+    expose: ["3000"]
+    networks:
+      edge:
+        # IP fixo enquanto o Caddy roda no host e nao resolve nome de container.
+        ipv4_address: 172.31.0.13
+    # O Postgres do host escuta no gateway da bridge padrao (172.17.0.1).
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    volumes:
+      # Anexos do WhatsApp e imagens de newsletter. O volume nasce com o dono
+      # `node` (1000:1000), que e quem roda o processo.
+      - storage:/app/storage
+    labels:
+      avilaops.domain: crm.avilaops.com
+      avilaops.stack: crm
+      avilaops.tier: web
+      avilaops.backup: "true"
+      avilaops.owner: nicolas
+
+volumes:
+  storage:
+    name: crm-avilaops-com-storage
+
+networks:
+  edge:
+    external: true

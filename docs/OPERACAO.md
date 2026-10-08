@@ -1,5 +1,39 @@
 # Agenda CRM - Operacao
 
+## Produção hoje
+
+Desde 08/10/2026 o CRM roda no servidor `applications`, no padrão da
+plataforma (o mesmo do TMS e do auth):
+
+| O quê | Onde |
+| --- | --- |
+| Pasta | `/opt/crm-avilaops-com` (`docker-compose.yml` e `.env`) |
+| Compose | [`docker-compose.production.yml`](../docker-compose.production.yml) deste repositório, copiado para lá como `docker-compose.yml` |
+| Container | `crm-avilaops-com-web`, na rede `edge`, IP `172.31.0.13`, porta 3000, sem porta publicada |
+| Banco | PostgreSQL do host, banco e role `crm_avilaops_com`, por `host.docker.internal` |
+| Arquivos | volume `crm-avilaops-com-storage` em `/app/storage` |
+| Proxy | bloco `crm.avilaops.com` no Caddyfile do host |
+| DNS | registro A direto para o servidor, sem o proxy da Cloudflare |
+| Deploy | `/etc/avilaops/deploy/crm.avilaops.com.conf` (versionado no `avilaops/infra`) |
+| Backup | banco na lista de `/usr/local/bin/backup-todos-bancos.sh`, diário |
+
+O banco foi restaurado do backup de 05/10/2026 do servidor antigo (4.435
+contatos, uma empresa, um usuário). A `ENCRYPTION_KEY` antiga se perdeu com
+aquele servidor: os segredos das integrações de IA e de e-mail, cifrados com
+ela, foram apagados e precisam ser informados de novo nas telas. O arquivo de
+origem ficou em `/opt/backups/crm-agenda_crm-20261005.sql.gz`.
+
+A conta da Meta é lida do auth com a integração `crm` cadastrada lá
+(`AUTH_META_CLIENT_ID` e `AUTH_META_CLIENT_SECRET` no `.env`).
+
+Logs: `docker logs -f crm-avilaops-com-web`. Migrar à mão:
+`docker exec crm-avilaops-com-web npm run db:migrate`.
+
+As seções **Logs**, **Backup** e **Restore** mais abaixo, e os scripts
+`deploy.sh`, `subir-sem-ci.sh`, `deploy-candidate.sh`,
+`backup-agenda-crm.sh` e `restore-agenda-crm.sh`, descrevem a stack antiga em
+`/opt/agenda-crm`, que não existe mais. Não usar sem reescrever.
+
 ## Deploy
 
 Todo push na `main` passa pelo [`deploy-production.yml`](../.github/workflows/deploy-production.yml), o mesmo pipeline dos outros produtos da plataforma (`avilaops/infra`):
@@ -37,19 +71,23 @@ No servidor, como root:
    command="sudo /usr/local/sbin/avila-deploy crm.avilaops.com \"$SSH_ORIGINAL_COMMAND\"",restrict ssh-ed25519 AAAA… crm.avilaops.com
    ```
 
-3. O destino em `/etc/avilaops/deploy/crm.avilaops.com.conf`, dono root e sem escrita para outros usuários. O infra versiona esses arquivos em `deploy/production/`. Para a stack que está no ar:
+3. O destino em `/etc/avilaops/deploy/crm.avilaops.com.conf`, dono root e sem escrita para outros usuários. O infra versiona esses arquivos em `deploy/production/`:
 
    ```sh
-   PROJECT_DIR=/opt/agenda-crm/current
-   COMPOSE_FILE=/opt/agenda-crm/current/docker-compose.production.yml
-   COMPOSE_PROJECT=current
-   SERVICE=app
-   CONTAINER=agenda-crm-app
+   PROJECT_DIR=/opt/crm-avilaops-com
+   COMPOSE_FILE=/opt/crm-avilaops-com/docker-compose.yml
+   COMPOSE_PROJECT=crm-avilaops-com
+   SERVICE=web
+   CONTAINER=crm-avilaops-com-web
    IMAGE_REPOSITORY=ghcr.io/avilaops/crm.avilaops.com
-   HEALTH_URL=http://127.0.0.1:3020/api/health
+   HEALTH_URL=http://172.31.0.13:3000/api/health
    ```
 
-4. Quatro conferências no servidor antes do primeiro deploy. O despachante volta atrás se algo não bater, mas é melhor não descobrir assim:
+   O despachante só troca a imagem de um container que já existe. A primeira
+   subida é à mão: `docker pull` da imagem pelo digest e
+   `docker compose -f docker-compose.yml -f /var/lib/avilaops/deploy/crm.avilaops.com/image.yml up -d web`.
+
+4. Quatro conferências no servidor antes do primeiro deploy, escritas para a stack antiga (os nomes mudaram, as regras valem). O despachante volta atrás se algo não bater, mas é melhor não descobrir assim:
    - `docker inspect agenda-crm-app --format '{{index .Config.Labels "com.docker.compose.project"}}'` devolve o `COMPOSE_PROJECT`. Sem `name:` no arquivo, o compose usa o nome da pasta, `current`.
    - O serviço `app` não tem `command:`. Se tiver, ele passa por cima do `CMD` da imagem e o schema deixa de rodar no deploy.
    - O `app` recebe o ambiente por `env_file:`. O despachante não passa `--env-file .env.production.local`, então um `${VAR}` no compose chegaria vazio.
