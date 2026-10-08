@@ -17,6 +17,7 @@ import { publishRealtime, publishRealtimeAsync, registerRealtimeRoutes, startRea
 import { ingestInboundMedia, maxMediaBytes, registerWhatsAppMediaRoutes, WHATSAPP_MEDIA_TYPES } from "./whatsapp-media.js";
 import { assertSendWindow, registerWhatsAppTemplateRoutes, WINDOW_SELECT_SQL } from "./whatsapp-templates.js";
 import { enviar as enviarPelaMessageria, getConnection as conexaoMessageria, MessageriaRequestError, registerMessageriaRoutes } from "./messageria.js";
+import { paginaDaMeta, precisaRenovar, registerAuthMetaRoutes, renovarConexaoMeta, type CanalDescoberto } from "./auth-meta.js";
 import { registerMailRoutes } from "./routes-mail.js";
 import { startAutomation } from "./automation.js";
 import { registerAiRoutes } from "./routes-ai.js";
@@ -61,7 +62,12 @@ type MetaIntegration = {
   user_name: string | null;
   connected_at: string | null;
   token_expires_at: string | null;
+  metadata: Record<string, unknown> | null;
 };
+
+const META_COLUMNS = "app_id, app_secret, access_token, user_name, connected_at, token_expires_at, metadata";
+/** Desligado nos testes (`background: false`): leitura de integração não vai à rede. */
+let renovacaoMetaLigada = false;
 
 type AuthUser = {
   id: string;
@@ -217,11 +223,6 @@ async function requireAuth(request: FastifyRequest, reply: FastifyReply) {
   return user;
 }
 
-function requireSetupToken(requestToken?: string) {
-  const expected = process.env.SETUP_TOKEN;
-  return Boolean(expected && requestToken && requestToken === expected);
-}
-
 async function getTenantId() {
   const result = await query<{ id: string }>("select id from tenants where slug = $1", [DEFAULT_TENANT_SLUG]);
   if (!result.rows[0]) throw new Error(`Tenant not found: ${DEFAULT_TENANT_SLUG}`);
@@ -308,15 +309,31 @@ function sessionHashFrom(cookieHeader?: string) {
   return token ? hashToken(token) : null;
 }
 
-async function getMetaIntegration(tenantId: string) {
-  const result = await query<MetaIntegration>("select app_id, app_secret, access_token, user_name, connected_at, token_expires_at from integrations where tenant_id = $1 and provider = $2", [
-    tenantId,
-    META_PROVIDER,
-  ]);
+async function readMetaIntegration(tenantId: string) {
+  const result = await query<MetaIntegration>(`select ${META_COLUMNS} from integrations where tenant_id = $1 and provider = $2`, [tenantId, META_PROVIDER]);
   const integration = result.rows[0] ?? null;
   if (integration) {
     integration.app_secret = decryptSecret(integration.app_secret);
     integration.access_token = decryptSecret(integration.access_token);
+  }
+  return integration;
+}
+
+/**
+ * A conexão da Meta da empresa. Quando ela veio do auth (ver `auth-meta.ts`),
+ * o token guardado é uma cópia: com ele ainda válido, devolve o que tem e
+ * confere no auth em segundo plano; só espera a rede se a cópia já venceu.
+ */
+async function getMetaIntegration(tenantId: string) {
+  let integration = await readMetaIntegration(tenantId);
+  if (integration && renovacaoMetaLigada) {
+    const quando = precisaRenovar(integration.metadata, integration.token_expires_at);
+    if (quando === "agora") {
+      await renovarConexaoMeta(tenantId, integration.metadata, encryptSecret);
+      integration = await readMetaIntegration(tenantId);
+    } else if (quando === "segundo_plano") {
+      void renovarConexaoMeta(tenantId, integration.metadata, encryptSecret);
+    }
   }
   return { tenantId, integration };
 }
@@ -417,7 +434,10 @@ async function consumeOauthState(user: AuthUser, provider: string, state: string
   return Boolean(result.rowCount);
 }
 
-function metaStatus(row: Awaited<ReturnType<typeof getMetaIntegration>>["integration"]) {
+function metaStatus(row: MetaIntegration | null) {
+  const metadata = row?.metadata ?? {};
+  const peloAuth = metadata.origem === "auth";
+  const pendencia = peloAuth && (metadata.auth_estado === "vencida" || metadata.auth_estado === "nao_conectada") ? metadata.auth_estado : null;
   return {
     configured: Boolean(row?.app_id && row?.app_secret),
     connected: Boolean(row?.access_token),
@@ -425,6 +445,12 @@ function metaStatus(row: Awaited<ReturnType<typeof getMetaIntegration>>["integra
     userName: row?.user_name ?? null,
     connectedAt: row?.connected_at ?? null,
     tokenExpiresAt: row?.token_expires_at ?? null,
+    /** `auth`: conexão lida da conta Ávila Ops. `direta`: OAuth antigo do próprio CRM. */
+    origem: peloAuth ? "auth" : row?.access_token ? "direta" : null,
+    conta: peloAuth && typeof metadata.auth_email === "string" ? metadata.auth_email : null,
+    pendencia,
+    numeros: peloAuth && typeof metadata.numeros === "number" ? metadata.numeros : null,
+    paginaDaMeta: paginaDaMeta(),
   };
 }
 
@@ -453,11 +479,42 @@ async function upsertWhatsAppChannel(tenantId: string, entryId: string | undefin
     `insert into channels (tenant_id, provider, external_id, display_name, phone_number, status, metadata, updated_at)
      values ($1, 'whatsapp', $2, $3, $4, 'connected', $5, now())
      on conflict (tenant_id, provider, external_id)
-     do update set display_name = excluded.display_name, phone_number = excluded.phone_number, status = 'connected', metadata = channels.metadata || excluded.metadata, updated_at = now()
+     do update set display_name = case when excluded.phone_number is null then channels.display_name else excluded.display_name end,
+       phone_number = coalesce(excluded.phone_number, channels.phone_number), status = 'connected', metadata = channels.metadata || excluded.metadata, updated_at = now()
      returning id`,
     [tenantId, externalId, displayName, metadata?.display_phone_number ?? null, JSON.stringify({ waba_id: entryId ?? null })],
   );
   return result.rows[0]?.id ?? null;
+}
+
+/**
+ * Grava os números que a conexão do auth enxerga e desliga os que sumiram dela.
+ *
+ * Canal que já existia por outro caminho (webhook direto) não ganha a marca
+ * `origem: auth`: ele recebe mensagem, e a marca diria à tela que não recebe.
+ */
+async function gravarCanaisDoAuth(tenantId: string, canais: CanalDescoberto[]) {
+  let criados = 0;
+  let atualizados = 0;
+  for (const canal of canais) {
+    const existente = await query<{ metadata: Record<string, unknown> | null }>("select metadata from channels where tenant_id = $1 and provider = 'whatsapp' and external_id = $2", [tenantId, canal.numeroId]);
+    const channelId = await upsertWhatsAppChannel(tenantId, canal.wabaId, { phone_number_id: canal.numeroId, display_phone_number: canal.numero ?? undefined });
+    if (!channelId) continue;
+    const anterior = existente.rows[0];
+    if (anterior) atualizados += 1;
+    else criados += 1;
+    const marcaOrigem = !anterior || anterior.metadata?.origem === "auth";
+    await query("update channels set metadata = metadata || $1::jsonb, team_name = coalesce(team_name, $2), last_sync_at = now(), error_message = null, updated_at = now() where id = $3", [
+      JSON.stringify({ business_name: canal.negocio, waba_name: canal.wabaNome, ...(marcaOrigem ? { origem: "auth" } : {}) }),
+      canal.negocio,
+      channelId,
+    ]);
+  }
+  await query(
+    "update channels set status = 'disconnected', updated_at = now() where tenant_id = $1 and provider = 'whatsapp' and metadata->>'origem' = 'auth' and not (external_id = any($2::text[]))",
+    [tenantId, canais.map((canal) => canal.numeroId)],
+  );
+  return { criados, atualizados };
 }
 
 async function upsertWhatsAppContact(tenantId: string, waId: string, name: string | undefined) {
@@ -679,17 +736,6 @@ async function processWhatsAppWebhook(tenantId: string, payload: WhatsAppWebhook
   return { messages, statuses };
 }
 
-const credentialsSchema = z.object({
-  appId: z.string().min(5),
-  appSecret: z.string().optional(),
-});
-
-const exchangeSchema = z.object({
-  code: z.string().min(1),
-  state: z.string().min(16),
-  redirectUri: z.string().url(),
-});
-
 const loginSchema = z.object({
   email: z.string().email(),
   password: z.string().min(8),
@@ -815,6 +861,7 @@ async function recordEvent(tenantId: string, entityType: string, eventType: stri
 
 export async function buildApp(options: { background?: boolean } = {}) {
   const app = Fastify({ logger: process.env.NODE_ENV !== "test" });
+  renovacaoMetaLigada = options.background !== false;
   installErrorHandler(app);
   if (options.background !== false) await ensureInitialAdminPassword();
 
@@ -1902,227 +1949,49 @@ export async function buildApp(options: { background?: boolean } = {}) {
     return { channels: result.rows };
   });
 
-  app.post("/api/meta/credentials", async (request, reply) => {
+  /**
+   * OAuth da Meta pelo app do próprio CRM: aposentado em 08/10/2026.
+   *
+   * Pedia App ID, App Secret e `SETUP_TOKEN` digitados à mão e nunca teve tela.
+   * A conexão com a Meta agora mora no auth.avilaops.com e o CRM a lê por
+   * `POST /api/meta/sincronizar` (ver `auth-meta.ts`).
+   */
+  const metaAposentada = async (request: FastifyRequest, reply: FastifyReply) => {
     const user = await requireAuth(request, reply);
     if (!user) return;
-    if (!canManage(user)) return reply.code(403).send({error:"Permissao insuficiente."});
-    if (!requireSetupToken(request.headers["x-setup-token"] as string | undefined)) {
-      return reply.code(401).send({ error: "Token administrativo invalido." });
-    }
-
-    const body = credentialsSchema.parse(request.body);
-    const tenantId = user.tenant_id;
-    const current = await getMetaIntegration(user.tenant_id);
-    const secretToSave = body.appSecret?.trim() ? encryptSecret(body.appSecret.trim()) : current.integration?.app_secret ? encryptSecret(current.integration.app_secret) : null;
-    if (!secretToSave) return reply.code(400).send({ error: "App Secret obrigatorio na primeira configuracao." });
-    const result = await query<MetaIntegration>(
-      `insert into integrations (tenant_id, provider, app_id, app_secret, updated_at)
-       values ($1, $2, $3, $4, now())
-       on conflict (tenant_id, provider)
-       do update set app_id = excluded.app_id, app_secret = excluded.app_secret, updated_at = now()
-       returning app_id, app_secret, access_token, user_name, connected_at, token_expires_at`,
-      [tenantId, META_PROVIDER, body.appId, secretToSave],
-    );
-
-    await query("insert into events (tenant_id, entity_type, event_type, payload) values ($1, $2, $3, $4)", [
-      tenantId,
-      "integration",
-      "meta.credentials_saved",
-      JSON.stringify({ provider: META_PROVIDER }),
-    ]);
-
-    return metaStatus(result.rows[0]);
-  });
-
-  app.get("/api/meta/login-url", async (request, reply) => {
-    const user = await requireAuth(request, reply);
-    if (!user) return;
-    if (!canManage(user)) return reply.code(403).send({error:"Permissao insuficiente."});
-    const redirectUri = z.string().url().parse((request.query as { redirectUri?: string }).redirectUri);
-    const { integration } = await getMetaIntegration(user.tenant_id);
-    if (!integration?.app_id || !integration?.app_secret) {
-      return reply.code(400).send({ error: "Credenciais Meta ainda nao configuradas." });
-    }
-
-    const state = await createOauthState(user, "meta", redirectUri);
-    const tenantId = user.tenant_id;
-    await query("insert into events (tenant_id, entity_type, event_type, payload) values ($1, $2, $3, $4)", [
-      tenantId,
-      "integration",
-      "meta.oauth_started",
-      JSON.stringify({ state, redirectUri }),
-    ]);
-
-    const scopes = [
-      "business_management",
-      "pages_show_list",
-      "pages_read_engagement",
-      "instagram_basic",
-      "ads_read",
-      "leads_retrieval",
-      "whatsapp_business_management",
-      "whatsapp_business_messaging",
-    ].join(",");
-
-    const params = new URLSearchParams({
-      client_id: integration.app_id,
-      redirect_uri: redirectUri,
-      state,
-      scope: scopes,
-      response_type: "code",
+    return reply.code(410).send({
+      error: "A conexao com a Meta passou para a conta Avila Ops. Conecte em Configuracoes > Canais > WhatsApp.",
+      code: "meta_pelo_auth",
+      paginaDaMeta: paginaDaMeta(),
     });
+  };
+  app.post("/api/meta/credentials", metaAposentada);
+  app.get("/api/meta/login-url", metaAposentada);
+  app.post("/api/meta/exchange", metaAposentada);
+  app.post("/api/meta/sync-channels", metaAposentada);
 
-    return { url: `https://www.facebook.com/${META_GRAPH_VERSION}/dialog/oauth?${params.toString()}` };
-  });
-
-  app.post("/api/meta/exchange", async (request, reply) => {
-    const user = await requireAuth(request, reply);
-    if (!user) return;
-    if (!canManage(user)) return reply.code(403).send({error:"Permissao insuficiente."});
-    const body = exchangeSchema.parse(request.body);
-    if (!await consumeOauthState(user,"meta",body.state,body.redirectUri)) return reply.code(400).send({error:"Estado OAuth invalido ou expirado."});
-    const { tenantId, integration } = await getMetaIntegration(user.tenant_id);
-    if (!integration?.app_id || !integration?.app_secret) {
-      return reply.code(400).send({ error: "Credenciais Meta ainda nao configuradas." });
-    }
-
-    const shortUrl = new URL(`https://graph.facebook.com/${META_GRAPH_VERSION}/oauth/access_token`);
-    shortUrl.searchParams.set("client_id", integration.app_id);
-    shortUrl.searchParams.set("client_secret", integration.app_secret);
-    shortUrl.searchParams.set("redirect_uri", body.redirectUri);
-    shortUrl.searchParams.set("code", body.code);
-    const shortResponse = await fetch(shortUrl);
-    const shortData = (await shortResponse.json()) as { access_token?: string; error?: { message?: string } };
-    if (!shortResponse.ok || !shortData.access_token) {
-      return reply.code(400).send({ error: shortData.error?.message ?? "Falha ao trocar codigo OAuth." });
-    }
-
-    const longUrl = new URL(`https://graph.facebook.com/${META_GRAPH_VERSION}/oauth/access_token`);
-    longUrl.searchParams.set("grant_type", "fb_exchange_token");
-    longUrl.searchParams.set("client_id", integration.app_id);
-    longUrl.searchParams.set("client_secret", integration.app_secret);
-    longUrl.searchParams.set("fb_exchange_token", shortData.access_token);
-    const longResponse = await fetch(longUrl);
-    const longData = (await longResponse.json()) as { access_token?: string; expires_in?: number; error?: { message?: string } };
-    if (!longResponse.ok || !longData.access_token) {
-      return reply.code(400).send({ error: longData.error?.message ?? "Falha ao criar token Meta de longa duracao." });
-    }
-
-    const meUrl = new URL(`https://graph.facebook.com/${META_GRAPH_VERSION}/me`);
-    meUrl.searchParams.set("fields", "id,name");
-    meUrl.searchParams.set("access_token", longData.access_token);
-    const meResponse = await fetch(meUrl);
-    const meData = (await meResponse.json()) as { id?: string; name?: string };
-    const expiresAt = longData.expires_in ? new Date(Date.now() + longData.expires_in * 1000).toISOString() : null;
-
-    const saved = await query<MetaIntegration>(
-      `update integrations
-       set access_token = $1, user_name = $2, connected_at = now(), token_expires_at = $3, metadata = metadata || $4::jsonb, updated_at = now()
-       where tenant_id = $5 and provider = $6
-       returning app_id, app_secret, access_token, user_name, connected_at, token_expires_at`,
-      [encryptSecret(longData.access_token), meData.name ?? null, expiresAt, JSON.stringify({ meta_user_id: meData.id ?? null }), tenantId, META_PROVIDER],
-    );
-
-    await query("insert into events (tenant_id, entity_type, event_type, payload) values ($1, $2, $3, $4)", [
-      tenantId,
-      "integration",
-      "meta.connected",
-      JSON.stringify({ userName: meData.name ?? null }),
-    ]);
-
-    return metaStatus(saved.rows[0]);
-  });
-
+  /**
+   * Tira da empresa a cópia do token. A conexão em si continua no auth: quem
+   * quer revogar o acesso da Ávila Ops à Meta faz isso em `/conta/meta`.
+   */
   app.post("/api/meta/disconnect", async (request, reply) => {
     const user = await requireAuth(request, reply);
     if (!user) return;
     if (!canManage(user)) return reply.code(403).send({error:"Permissao insuficiente."});
-    if (!requireSetupToken(request.headers["x-setup-token"] as string | undefined)) {
-      return reply.code(401).send({ error: "Token administrativo invalido." });
-    }
 
     const tenantId = user.tenant_id;
     const result = await query<MetaIntegration>(
       `update integrations
-       set access_token = null, user_name = null, connected_at = null, token_expires_at = null, updated_at = now()
+       set access_token = null, user_name = null, connected_at = null, token_expires_at = null,
+         metadata = metadata - 'origem' - 'auth_email' - 'auth_estado' - 'sincronizado_em' - 'numeros' - 'escopos' - 'meta_user_id', updated_at = now()
        where tenant_id = $1 and provider = $2
-       returning app_id, app_secret, access_token, user_name, connected_at, token_expires_at`,
+       returning ${META_COLUMNS}`,
       [tenantId, META_PROVIDER],
     );
-
-    await query("insert into events (tenant_id, entity_type, event_type, payload) values ($1, $2, $3, $4)", [
-      tenantId,
-      "integration",
-      "meta.disconnected",
-      JSON.stringify({ provider: META_PROVIDER }),
-    ]);
+    await query("update channels set status = 'disconnected', updated_at = now() where tenant_id = $1 and provider = 'whatsapp' and metadata->>'origem' = 'auth'", [tenantId]);
+    await recordEvent(tenantId, "integration", "meta.disconnected", { provider: META_PROVIDER }, user.id, null, (request as RequestWithId).requestId);
 
     return metaStatus(result.rows[0] ?? null);
-  });
-
-  app.post("/api/meta/sync-channels", async (request, reply) => {
-    const user = await requireAuth(request, reply);
-    if (!user) return;
-    if (!canManage(user)) return reply.code(403).send({ error: "Permissao insuficiente." });
-    const { integration } = await getMetaIntegration(user.tenant_id);
-    if (!integration?.access_token) return reply.code(400).send({ error: "Meta ainda nao conectada." });
-
-    const businessesUrl = new URL(`https://graph.facebook.com/${META_GRAPH_VERSION}/me/businesses`);
-    businessesUrl.searchParams.set("fields", "id,name");
-    businessesUrl.searchParams.set("access_token", integration.access_token);
-    const businessesResponse = await fetch(businessesUrl);
-    const businessesData = (await businessesResponse.json()) as { data?: Array<{ id: string; name?: string }>; error?: { message?: string } };
-    if (!businessesResponse.ok) {
-      const error = businessesData.error?.message ?? "Falha ao listar negocios Meta.";
-      await recordEvent(user.tenant_id, "channel", "meta.channels_sync_failed", { error }, user.id, null, (request as RequestWithId).requestId);
-      return reply.code(400).send({ error });
-    }
-
-    const synced = [];
-    let created = 0;
-    let updated = 0;
-    for (const business of businessesData.data ?? []) {
-      const wabaUrl = new URL(`https://graph.facebook.com/${META_GRAPH_VERSION}/${business.id}/owned_whatsapp_business_accounts`);
-      wabaUrl.searchParams.set("fields", "id,name,phone_numbers{id,display_phone_number,verified_name,code_verification_status,quality_rating}");
-      wabaUrl.searchParams.set("access_token", integration.access_token);
-      const wabaResponse = await fetch(wabaUrl);
-      const wabaData = (await wabaResponse.json()) as {
-        error?: { message?: string };
-        data?: Array<{
-          id: string;
-          name?: string;
-          phone_numbers?: { data?: Array<{ id: string; display_phone_number?: string; verified_name?: string; code_verification_status?: string; quality_rating?: string }> };
-        }>;
-      };
-      if (!wabaResponse.ok) {
-        await recordEvent(user.tenant_id, "channel", "meta.waba_sync_failed", { business_id: business.id, error: wabaData.error?.message ?? "Falha ao listar WABAs." }, user.id, null, (request as RequestWithId).requestId);
-        continue;
-      }
-      for (const waba of wabaData.data ?? []) {
-        for (const phone of waba.phone_numbers?.data ?? []) {
-          const exists = await query<{ id: string }>("select id from channels where tenant_id = $1 and provider = 'whatsapp' and external_id = $2", [user.tenant_id, phone.id]);
-          const channelId = await upsertWhatsAppChannel(user.tenant_id, waba.id, { phone_number_id: phone.id, display_phone_number: phone.display_phone_number });
-          if (exists.rows[0]) updated += 1;
-          else created += 1;
-          await query("update channels set metadata = metadata || $1::jsonb, team_name = coalesce(team_name, $2), last_sync_at = now(), error_message = null, updated_at = now() where id = $3", [
-            JSON.stringify({
-              business_id: business.id,
-              business_name: business.name ?? null,
-              waba_name: waba.name ?? null,
-              verified_name: phone.verified_name ?? null,
-              code_verification_status: phone.code_verification_status ?? null,
-              quality_rating: phone.quality_rating ?? null,
-            }),
-            business.name ?? null,
-            channelId,
-          ]);
-          synced.push({ id: phone.id, displayPhoneNumber: phone.display_phone_number ?? null, verifiedName: phone.verified_name ?? null });
-        }
-      }
-    }
-
-    await recordEvent(user.tenant_id, "channel", "meta.channels_synced", { count: synced.length, created, updated }, user.id, null, (request as RequestWithId).requestId);
-    return { channels: synced, created, updated, total: synced.length };
   });
 
   app.get("/api/meta/webhook", async (request, reply) => {
@@ -2566,6 +2435,19 @@ export async function buildApp(options: { background?: boolean } = {}) {
     graphVersion: META_GRAPH_VERSION,
     touchConversationAfterSend,
     decryptSecret,
+  });
+  registerAuthMetaRoutes(app, {
+    requireAuth,
+    canManage,
+    checkRateLimit,
+    recordEvent,
+    encryptSecret,
+    emailDoSso: (request) => {
+      const token = parseCookies(request.headers.cookie).get(SSO_COOKIE);
+      return (token ? verifySsoToken(token) : null)?.email ?? null;
+    },
+    gravarCanais: gravarCanaisDoAuth,
+    status: async (tenantId) => metaStatus(await readMetaIntegration(tenantId)),
   });
   registerMessageriaRoutes(app, {
     requireAuth,

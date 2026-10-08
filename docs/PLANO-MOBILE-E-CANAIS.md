@@ -83,6 +83,18 @@ eventos. O que o CRM precisa da Messageria está em
 seção 7.2 do plano continua valendo para as integrações que são do CRM (ERP,
 Google, n8n, pagamentos).
 
+**Revisão de 08/10/2026.** A conexão do cliente com a Meta passou a morar no
+`auth.avilaops.com` ("a Ávila é que tem a Meta"): um app central, uma tela
+(`/conta/meta`), e cada sistema lê a conexão por `GET /api/meta/ativos`. O
+princípio acima não mudou, mudou o endereço: quem guarda o token é o auth, não a
+Messageria nem o CRM. O CRM mantém uma cópia cifrada, renovada sozinha, e mostra
+a conta em Configurações › Canais › WhatsApp. O que continua valendo daqui:
+recebimento e envio em produção são da Messageria. O número que o CRM descobre
+pela conta da Meta envia, mas não recebe, e por isso não conta como "WhatsApp
+conectado". O "Contrato proposto" abaixo precisa ser relido com isso em mente: a
+sessão de conexão hospedada deixa de ser necessária, porque a página já existe
+no auth.
+
 ### 2. Coexistência aparece como "em breve", não como disponível
 
 Sem a aprovação de Tech Provider não há Coexistência, e a conexão que existe

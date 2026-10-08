@@ -120,7 +120,6 @@ Configure `.env.local`:
 DATABASE_URL=postgresql://postgres:postgres@localhost:5432/agenda_crm
 PORT=3000
 DEFAULT_TENANT_SLUG=avila-ops
-SETUP_TOKEN=troque-este-token
 META_WEBHOOK_VERIFY_TOKEN=troque-este-token
 ```
 
@@ -144,30 +143,32 @@ conexão oficial com Coexistência em
 A conexão por QR Code (WhatsApp Web) foi desativada: é um caminho que a Meta não
 permite e pode custar o número do cliente.
 
-## Integração Meta (caminho antigo)
+## Conta da Meta
 
-O que segue é a conexão direta do app Meta do próprio CRM, que deixou de ser o
-caminho oficial e ficou sem tela. O código continua aqui até a integração pela
-Messageria estar comprovada em produção.
+A conexão do cliente com a Meta mora no `auth.avilaops.com`: a pessoa conecta o
+Facebook da empresa uma vez, em `/conta/meta`, e os sistemas da casa leem de lá.
+No CRM isso aparece em **Configurações › Canais › WhatsApp › Configuração
+avançada › Conta da Meta**.
 
-O frontend chama `/api/meta`. O backend cria a URL OAuth, troca o código por token e salva credenciais/status no Postgres.
+- `GET /api/meta/status`: a conta ligada à empresa, de onde ela veio e se há
+  pendência.
+- `POST /api/meta/sincronizar`: traz a conexão de quem está logado. Só vale
+  para quem entrou pelo SSO, e trocar de conta pede confirmação.
+- `POST /api/meta/disconnect`: tira da empresa a cópia do token. A conexão
+  continua no auth.
+- `GET/POST /api/meta/webhook`: recebimento direto da Meta, para empresas que
+  ainda têm `app_secret` próprio gravado.
 
-Fluxo atual:
+O CRM se identifica no auth com `AUTH_META_CLIENT_ID` e
+`AUTH_META_CLIENT_SECRET`, de uma integração criada em `/admin/integracoes` com
+a permissão de ler a Meta.
 
-- `GET /api/meta/status`: mostra se o app Meta está configurado e conectado.
-- `POST /api/meta/credentials`: salva App ID e App Secret no Postgres.
-- `GET /api/meta/login-url`: cria a URL de login Meta.
-- `POST /api/meta/exchange`: troca o `code` OAuth por token de longa duração.
-- `POST /api/meta/disconnect`: remove o token salvo.
-- `GET/POST /api/meta/webhook`: validação e recebimento inicial de eventos Meta.
+**Limite:** este caminho descobre os números e deixa enviar; ele não recebe
+mensagem. O recebimento continua pela Messageria.
 
-As rotas administrativas exigem `X-Setup-Token` com o valor de `SETUP_TOKEN`.
-
-No app Meta, cadastre o callback conforme o domínio final do servidor:
-
-```text
-https://SEU-DOMINIO/oauth-callback.html
-```
+O OAuth que o CRM fazia sozinho (`credentials`, `login-url`, `exchange`,
+`sync-channels`, com `SETUP_TOKEN`) foi aposentado em 08/10/2026: essas rotas
+respondem 410.
 
 ## Backlog de produto
 

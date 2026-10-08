@@ -122,7 +122,7 @@ export function routeApi(url, method) {
   if (path === '/api/settings') return { settings }
   if (path === '/api/knowledge') return { sources: [] }
   if (path === '/api/audit-logs') return { logs: [], pagination: { page: 1, pageSize: 50, total: 0 } }
-  if (path === '/api/meta/status') return { configured: false, connected: false, appConfiguredHint: null, userName: null, connectedAt: null, tokenExpiresAt: null }
+  if (path === '/api/meta/status') return { configured: false, connected: false, appConfiguredHint: null, userName: null, connectedAt: null, tokenExpiresAt: null, origem: null, conta: null, pendencia: null, numeros: null, paginaDaMeta: 'https://auth.avilaops.com/conta/meta' }
   if (path === '/api/integrations/messageria/status') return { connected: true, baseUrl: 'https://sms.avilaops.com', canalId: 'canal-1', assinaturaRegistrada: true, canais: [{ id: 'canal-1', numero: '+55 16 99234-0000', padrao: true, teste: false }] }
   if (path === '/api/integrations/erp/status') return { connected: false }
   if (path === '/api/integrations/google/status') return { connected: false }

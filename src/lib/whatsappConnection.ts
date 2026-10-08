@@ -10,7 +10,14 @@ import { formatPhoneBR } from './format'
  * CRM já cometeu (canal "Ativo" com token morto, QR parado em "connecting").
  */
 
-type ChannelLike = { id: string; provider: string; status: string; phone_number: string | null; display_name: string }
+type ChannelLike = {
+  id: string
+  provider: string
+  status: string
+  phone_number: string | null
+  display_name: string
+  metadata?: Record<string, unknown> | null
+}
 
 export type WhatsAppNumber = { id: string; label: string; isDefault: boolean; isTest: boolean }
 
@@ -19,7 +26,7 @@ export type WhatsAppConnectionView = {
   /** Frase para quem não é técnico; `null` quando está tudo certo. */
   reason: string | null
   /** Por onde a conta está ligada. */
-  via: 'messageria' | 'meta-direta' | null
+  via: 'messageria' | 'meta-direta' | 'conta-meta' | null
   numbers: WhatsAppNumber[]
   /** Canais por QR Code (WhatsApp Web): não oficiais, só para avisar. */
   unofficial: { id: string; label: string; neverCompleted: boolean }[]
@@ -77,19 +84,35 @@ export function describeWhatsAppConnection(messageria: MessageriaStatus | null, 
     return { state: 'connected', reason: null, via: 'messageria', numbers, unofficial }
   }
 
+  const cloud = channels.filter((channel) => channel.provider === 'whatsapp' && channel.status === 'connected')
+  const toNumbers = (list: ChannelLike[]) =>
+    list.map((channel) => ({
+      id: channel.id,
+      label: channel.phone_number ? formatPhoneBR(channel.phone_number) : channel.display_name,
+      isDefault: false,
+      isTest: false,
+    }))
+
   // Caminho antigo: Cloud API falada direto daqui, com o app Meta do CRM.
-  const direct = channels.filter((channel) => channel.provider === 'whatsapp' && channel.status === 'connected')
+  const direct = cloud.filter((channel) => channel.metadata?.origem !== 'auth')
   if (direct.length > 0) {
     return {
       state: 'degraded',
       reason: 'Ligado pelo caminho antigo, direto na Meta, que deixou de ser o oficial do CRM. Fale com a Ávila Ops para passar para a Messageria.',
       via: 'meta-direta',
-      numbers: direct.map((channel) => ({
-        id: channel.id,
-        label: channel.phone_number ? formatPhoneBR(channel.phone_number) : channel.display_name,
-        isDefault: false,
-        isTest: false,
-      })),
+      numbers: toNumbers(direct),
+      unofficial,
+    }
+  }
+
+  // Números que vieram da conta da Meta ligada na Ávila Ops: enviam, mas a
+  // resposta do cliente ainda não tem por onde chegar.
+  if (cloud.length > 0) {
+    return {
+      state: 'degraded',
+      reason: 'Encontramos estes números na sua conta da Meta. Falta ligar o recebimento para as respostas dos clientes chegarem aqui.',
+      via: 'conta-meta',
+      numbers: toNumbers(cloud),
       unofficial,
     }
   }

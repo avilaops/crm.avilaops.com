@@ -9,6 +9,12 @@ Um caminho que aponta para o `graph.facebook.com` não sabe nada disso e cobra
 errado. E, no WhatsApp, a Meta bloqueia o **número**, não a mensagem: ter dois
 sistemas inscritos no mesmo WABA dobra o risco sem dobrar a capacidade.
 
+**Desde 08/10/2026** a conexão do cliente com a Meta (o login no Facebook, o
+token, a lista de números) mora no `auth.avilaops.com`, e o CRM a lê por
+`POST /api/meta/sincronizar` (`backend/auth-meta.ts`). Isso não muda o que está
+neste documento: mensagem em produção sai e chega pela Messageria. A conta da
+Meta no CRM serve para a empresa ver o que está ligado e quais números existem.
+
 ---
 
 ## O que passou para a Messageria

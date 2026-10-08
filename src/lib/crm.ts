@@ -280,12 +280,6 @@ export function listChannels() {
   return api<{ channels: CrmChannel[] }>('/api/channels')
 }
 
-export function syncMetaChannels() {
-  return api<{ channels: Array<{ id: string; displayPhoneNumber: string | null; verifiedName: string | null }>; created: number; updated: number; total: number }>('/api/meta/sync-channels', {
-    method: 'POST',
-  })
-}
-
 export function listContacts(filters?: { search?: string; page?: number; pageSize?: number }) {
   return api<{ contacts: CrmContact[]; pagination: { page: number; pageSize: number; total: number } }>(`/api/contacts${toQuery(filters)}`)
 }
