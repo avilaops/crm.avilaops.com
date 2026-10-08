@@ -1,17 +1,15 @@
 /**
- * Conexão direta com a Meta pelo app do próprio CRM — caminho antigo.
+ * Conta da Meta da empresa.
  *
- * Desde 04/09/2026 quem fala com a Meta é a Messageria (ver
- * docs/INTEGRACAO-MESSAGERIA.md). A tela usa só `getMetaStatus`, para avisar
- * quando ainda existe uma conexão direta; o OAuth e as credenciais ficam aqui,
- * sem tela, até a integração nova estar comprovada em produção — o roadmap pede
- * desativar e marcar, não apagar.
+ * A conexão mora na conta Ávila Ops (auth.avilaops.com): a pessoa conecta o
+ * Facebook da empresa lá, uma vez, e o CRM traz a conexão com `sincronizarMeta`.
+ * O OAuth que o CRM fazia por conta própria, com App ID e App Secret digitados,
+ * foi aposentado em 08/10/2026.
+ *
+ * Este caminho descobre os números e deixa enviar. Receber mensagem continua
+ * pela Messageria (ver docs/INTEGRACAO-MESSAGERIA.md).
  */
-const WORKER_BASE_URL =
-  (import.meta.env.VITE_META_WORKER_URL as string | undefined) ||
-  (import.meta.env.VITE_API_BASE_URL as string | undefined) ||
-  "/api/meta";
-const LOGIN_TIMEOUT_MS = 5 * 60 * 1000;
+const BASE = "/api/meta";
 
 export type MetaStatus = {
   configured: boolean;
@@ -20,18 +18,40 @@ export type MetaStatus = {
   userName: string | null;
   connectedAt: string | null;
   tokenExpiresAt: string | null;
+  /** `auth`: lida da conta Ávila Ops. `direta`: OAuth antigo do próprio CRM. */
+  origem: "auth" | "direta" | null;
+  /** E-mail da conta Ávila Ops de onde a conexão veio. */
+  conta: string | null;
+  /** A conta Ávila Ops avisou que a conexão caiu; a pessoa precisa refazê-la lá. */
+  pendencia: "vencida" | "nao_conectada" | null;
+  numeros: number | null;
+  paginaDaMeta: string;
 };
 
+/** Antes de trocar a conta ligada à empresa, o servidor devolve só isto. */
+export type MetaPrevia = { previa: true; conta: string; nome: string | null; numeros: string[] };
+export type MetaSincronizada = MetaStatus & { previa: false; criados: number; atualizados: number };
+
+/** Erro do servidor com o código, para a tela escolher o que oferecer. */
+export class MetaError extends Error {
+  code: string | null;
+
+  constructor(message: string, code: string | null) {
+    super(message);
+    this.name = "MetaError";
+    this.code = code;
+  }
+}
+
 async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${WORKER_BASE_URL}${path}`, {
+  const response = await fetch(`${BASE}${path}`, {
     ...init,
     credentials: "include",
     headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
   });
-  const data = await response.json().catch(() => null);
+  const data = (await response.json().catch(() => null)) as { error?: unknown; code?: unknown } | null;
   if (!response.ok) {
-    const message = data && typeof data === "object" && "error" in data ? String((data as { error: unknown }).error) : "Erro ao comunicar com o servidor."
-    throw message
+    throw new MetaError(typeof data?.error === "string" ? data.error : "Erro ao comunicar com o servidor.", typeof data?.code === "string" ? data.code : null);
   }
   return data as T;
 }
@@ -40,97 +60,14 @@ export function getMetaStatus() {
   return fetchJson<MetaStatus>("/status");
 }
 
-export function saveMetaCredentials(appId: string, appSecret: string, setupToken: string) {
-  return fetchJson<MetaStatus>("/credentials", {
-    method: "POST",
-    headers: { "X-Setup-Token": setupToken },
-    body: JSON.stringify({ appId, appSecret }),
-  });
+/**
+ * Traz a conexão da conta Ávila Ops de quem está logado. Sem `confirmar`, e se
+ * a empresa ainda não usa essa conta, a resposta é só a prévia.
+ */
+export function sincronizarMeta(confirmar = false) {
+  return fetchJson<MetaPrevia | MetaSincronizada>("/sincronizar", { method: "POST", body: JSON.stringify({ confirmar }) });
 }
 
-export function disconnectMeta(setupToken: string) {
-  return fetchJson<MetaStatus>("/disconnect", {
-    method: "POST",
-    headers: { "X-Setup-Token": setupToken },
-  });
-}
-
-export function connectMeta(): Promise<MetaStatus> {
-  const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
-  const redirectUri = `${window.location.origin}${basePath}/oauth-callback.html`;
-
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    let popup: Window | null = null;
-    let timeoutId: number | undefined;
-    let intervalId: number | undefined;
-
-    function cleanup() {
-      settled = true;
-      window.clearTimeout(timeoutId);
-      window.clearInterval(intervalId);
-      window.removeEventListener("message", onMessage);
-    }
-
-    function finish(action: () => void) {
-      if (settled) return;
-      cleanup();
-      try {
-        popup?.close();
-      } catch {
-        // ignore
-      }
-      action();
-    }
-
-    async function onMessage(event: MessageEvent) {
-      if (event.origin !== window.location.origin) return;
-      const data = event.data as { type?: string; code?: string; state?: string; error?: string } | null;
-      if (!data || data.type !== "meta-oauth-code") return;
-
-      if (data.error) {
-        finish(() => reject(data.error));
-        return;
-      }
-      if (!data.code || !data.state) {
-        finish(() => reject("Login com a Meta não retornou um código válido."));
-        return;
-      }
-
-      try {
-        const status = await fetchJson<MetaStatus>("/exchange", {
-          method: "POST",
-          body: JSON.stringify({ code: data.code, state: data.state, redirectUri }),
-        });
-        finish(() => resolve(status));
-      } catch (error) {
-        finish(() => reject(error));
-      }
-    }
-
-    window.addEventListener("message", onMessage);
-
-    fetchJson<{ url: string }>(`/login-url?redirectUri=${encodeURIComponent(redirectUri)}`)
-      .then((result) => {
-        if (settled) return;
-        popup = window.open(result.url, "meta-login", "width=480,height=700");
-        if (!popup) {
-          finish(() => reject("Não foi possível abrir a janela de login (pop-up bloqueado pelo navegador)."));
-          return;
-        }
-
-        timeoutId = window.setTimeout(() => {
-          finish(() => reject("Tempo esgotado para concluir o login com a Meta."));
-        }, LOGIN_TIMEOUT_MS);
-
-        intervalId = window.setInterval(() => {
-          if (popup?.closed) {
-            finish(() => reject("Login cancelado."));
-          }
-        }, 500);
-      })
-      .catch((error) => {
-        finish(() => reject(error));
-      });
-  });
+export function disconnectMeta() {
+  return fetchJson<MetaStatus>("/disconnect", { method: "POST", body: "{}" });
 }

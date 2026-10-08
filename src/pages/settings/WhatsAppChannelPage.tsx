@@ -1,4 +1,4 @@
-import { CheckCircle2, ChevronDown, MessageCircle, Phone, RefreshCw, ShieldCheck } from 'lucide-react'
+import { CheckCircle2, ChevronDown, ExternalLink, MessageCircle, Phone, RefreshCw, ShieldCheck } from 'lucide-react'
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
 import { Sheet } from '../../components/ui/Sheet'
 import { FormField, Notice } from '../../components/ui/Form'
@@ -6,7 +6,7 @@ import { StatusBadge, ToneBadge } from '../../components/ui/StatusBadge'
 import { CostSimulator, PriceSummary, PriceTable } from '../../components/whatsapp/Pricing'
 import { tabelaVigente } from '../../data/whatsappPricing'
 import { listChannels, type CrmChannel } from '../../lib/crm'
-import { getMetaStatus, type MetaStatus } from '../../lib/meta'
+import { disconnectMeta, getMetaStatus, MetaError, sincronizarMeta, type MetaPrevia, type MetaStatus } from '../../lib/meta'
 import { connectMessageria, disconnectMessageria, getMessageriaStatus, type MessageriaStatus } from '../../lib/messageria'
 import { useNavigation } from '../../lib/navigationContext'
 import { useSession } from '../../lib/session'
@@ -480,13 +480,155 @@ function AdvancedSettings({
           </form>
         )}
 
-        {meta?.connected && (
-          <Notice tone="neutral">
-            Há também uma conexão direta com a Meta pelo app do próprio CRM ({meta.userName ?? 'conta Meta'}). É o caminho antigo, que
-            deixou de ser o oficial: números ligados pela Messageria não passam por ele.
-          </Notice>
-        )}
+        <MetaAccount meta={meta} onChanged={onChanged} />
       </div>
     </Disclosure>
+  )
+}
+
+const dataCurta = new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' })
+
+/**
+ * Conta da Meta da empresa.
+ *
+ * A pessoa conecta o Facebook na conta Ávila Ops, em outra aba, e volta para
+ * trazer a conexão. O CRM não pede App ID, segredo nem token: esse formulário
+ * existia só por `curl` e foi aposentado.
+ */
+function MetaAccount({ meta, onChanged }: { meta: MetaStatus | null; onChanged: () => void }) {
+  const [busy, setBusy] = useState<'' | 'sync' | 'disconnect'>('')
+  const [preview, setPreview] = useState<MetaPrevia | null>(null)
+  const [feedback, setFeedback] = useState<{ tone: 'success' | 'danger' | 'warning'; text: string } | null>(null)
+  const page = meta?.paginaDaMeta ?? 'https://auth.avilaops.com/conta/meta'
+  const fromAccount = meta?.origem === 'auth'
+
+  async function sync(confirmar: boolean) {
+    setBusy('sync')
+    setFeedback(null)
+    try {
+      const result = await sincronizarMeta(confirmar)
+      if (result.previa) {
+        setPreview(result)
+        return
+      }
+      setPreview(null)
+      const total = result.numeros ?? 0
+      setFeedback({
+        tone: 'success',
+        text: total > 0 ? `Conta da Meta atualizada. ${total} número(s) de WhatsApp encontrado(s).` : 'Conta da Meta atualizada. Ela ainda não tem número de WhatsApp.',
+      })
+      onChanged()
+    } catch (error) {
+      const code = error instanceof MetaError ? error.code : null
+      const text = error instanceof Error ? error.message : 'Não foi possível consultar a conta da Meta.'
+      // Não conectou ou venceu: não é falha, é o próximo passo da pessoa.
+      setFeedback({ tone: code === 'nao_conectada' || code === 'vencida' || code === 'sso_obrigatorio' ? 'warning' : 'danger', text })
+    } finally {
+      setBusy('')
+    }
+  }
+
+  async function disconnect() {
+    if (!window.confirm('Tirar a conta da Meta desta empresa? A conexão continua guardada na sua conta Ávila Ops.')) return
+    setBusy('disconnect')
+    setFeedback(null)
+    try {
+      await disconnectMeta()
+      setPreview(null)
+      setFeedback({ tone: 'success', text: 'Conta da Meta retirada desta empresa.' })
+      onChanged()
+    } catch (error) {
+      setFeedback({ tone: 'danger', text: error instanceof Error ? error.message : 'Não foi possível desconectar.' })
+    } finally {
+      setBusy('')
+    }
+  }
+
+  return (
+    <section className="space-y-3 border-t border-slate-100 pt-4" aria-labelledby="conta-meta-titulo">
+      <h3 id="conta-meta-titulo" className="font-semibold text-slate-900">Conta da Meta</h3>
+      <p>
+        O Facebook da empresa é conectado uma vez só, na sua conta Ávila Ops, e vale para os sistemas da casa. Aqui o CRM lê essa conexão para
+        encontrar os números de WhatsApp. As respostas dos clientes continuam chegando pela Messageria.
+      </p>
+      {feedback && <Notice tone={feedback.tone}>{feedback.text}</Notice>}
+
+      {meta?.pendencia && (
+        <Notice tone="warning">
+          {meta.pendencia === 'vencida'
+            ? 'A conexão com a Meta venceu. Conecte de novo na conta Ávila Ops e depois atualize aqui.'
+            : 'A conta da Meta foi desconectada na conta Ávila Ops. Conecte de novo lá e depois atualize aqui.'}
+        </Notice>
+      )}
+
+      {meta?.connected && (
+        <dl className="grid gap-2 rounded-lg border border-slate-200 p-3">
+          <div className="flex flex-wrap justify-between gap-2">
+            <dt className="text-slate-500">Conectada como</dt>
+            <dd className="font-medium text-slate-900">{meta.userName ?? 'Conta da Meta'}</dd>
+          </div>
+          {meta.conta && (
+            <div className="flex flex-wrap justify-between gap-2">
+              <dt className="text-slate-500">Conta Ávila Ops</dt>
+              <dd className="break-all font-medium text-slate-900">{meta.conta}</dd>
+            </div>
+          )}
+          {meta.tokenExpiresAt && (
+            <div className="flex flex-wrap justify-between gap-2">
+              <dt className="text-slate-500">Válida até</dt>
+              <dd className="font-medium tabular-nums text-slate-900">{dataCurta.format(new Date(meta.tokenExpiresAt))}</dd>
+            </div>
+          )}
+          {meta.numeros !== null && (
+            <div className="flex flex-wrap justify-between gap-2">
+              <dt className="text-slate-500">Números de WhatsApp</dt>
+              <dd className="font-medium tabular-nums text-slate-900">{meta.numeros}</dd>
+            </div>
+          )}
+        </dl>
+      )}
+
+      {meta?.origem === 'direta' && (
+        <Notice tone="neutral">
+          Esta conexão foi feita pelo caminho antigo, direto pelo CRM. Ao trazer a conta da Meta da Ávila Ops, ela passa a ser a usada.
+        </Notice>
+      )}
+
+      {preview && (
+        <div className="space-y-3 rounded-lg border border-amber-200 bg-amber-50 p-3">
+          <p className="font-semibold text-slate-900">Usar esta conta da Meta nesta empresa?</p>
+          <p>
+            {preview.nome ?? 'Conta da Meta'} ({preview.conta}).{' '}
+            {preview.numeros.length > 0 ? `Números encontrados: ${preview.numeros.join(', ')}.` : 'Ela ainda não tem número de WhatsApp.'}
+          </p>
+          <div className="grid gap-2 medium:flex">
+            <button type="button" className={buttonClass.primary} disabled={busy !== ''} onClick={() => sync(true)}>
+              {busy === 'sync' ? 'Gravando…' : 'Usar esta conta'}
+            </button>
+            <button type="button" className={buttonClass.secondary} disabled={busy !== ''} onClick={() => setPreview(null)}>
+              Cancelar
+            </button>
+          </div>
+        </div>
+      )}
+
+      {!preview && (
+        <div className="grid gap-2 medium:flex medium:flex-wrap">
+          <a className={fromAccount && !meta?.pendencia ? buttonClass.secondary : buttonClass.primary} href={page} target="_blank" rel="noreferrer">
+            <ExternalLink size={16} aria-hidden="true" />
+            {fromAccount ? 'Abrir na conta Ávila Ops' : 'Conectar na Ávila Ops'}
+          </a>
+          <button type="button" className={buttonClass.secondary} disabled={busy !== ''} onClick={() => sync(false)}>
+            <RefreshCw size={16} aria-hidden="true" />
+            {busy === 'sync' ? 'Consultando…' : fromAccount ? 'Atualizar' : 'Já conectei, trazer para cá'}
+          </button>
+          {meta?.connected && (
+            <button type="button" className={buttonClass.danger} disabled={busy !== ''} onClick={disconnect}>
+              {busy === 'disconnect' ? 'Retirando…' : 'Retirar desta empresa'}
+            </button>
+          )}
+        </div>
+      )}
+    </section>
   )
 }

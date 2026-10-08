@@ -371,7 +371,7 @@ O que muda na prática: o trabalho deixa de ser "implementar a Cloud API" e pass
 
 #### 6.9.1 Sair da infraestrutura própria de Meta
 
-- [ ] Parar de tratar as rotas Meta do CRM como caminho de produção.
+- [x] Parar de tratar as rotas Meta do CRM como caminho de produção. *(08/10/2026: `credentials`, `login-url`, `exchange` e `sync-channels` respondem 410; a conexão com a Meta é lida do auth.avilaops.com por `POST /api/meta/sincronizar`.)*
 - [ ] Remover o `META_TOKEN` morto do `.env.production` para ninguém tentar reusá-lo.
 - [ ] Desinscrever o app "Ávila Ops" (`1670392484704840`) do WABA `1055665857141232`, ou deixar explicitamente documentado que ele não recebe webhook.
 - [ ] Encerrar o canal `qrcode` parado em `connecting`: ele desenha um estado que nunca vai avançar. *(02/10/2026: o CRM não cria mais canal por QR — a rota responde 410 — e a tela do WhatsApp avisa quando encontra um; o registro antigo continua no banco.)*
@@ -834,7 +834,7 @@ Prioridade: `P0/P1`
 - [ ] Definir Content Security Policy e revisar headers no app e proxy.
 - [ ] Validar HSTS, TLS, cookies e origem confiável em produção.
 - [ ] Substituir comparações simples de tokens administrativos por método resistente a timing.
-- [ ] Remover o `SETUP_TOKEN` da experiência normal do navegador.
+- [x] Remover o `SETUP_TOKEN` da experiência normal do navegador. *(08/10/2026: nenhuma rota do servidor lê mais essa variável.)*
 - [ ] Criar fluxo administrativo autenticado e autorizado para secrets Meta.
 - [ ] Não guardar token administrativo em `sessionStorage`.
 - [ ] Aplicar rate limit distribuído em login, OAuth, webhook, mensagens e exports.

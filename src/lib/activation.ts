@@ -9,11 +9,16 @@ import type { Page } from '../types'
  * volta a pendente sozinho, porque a verdade é o estado da conta.
  */
 
-/** Caminhos oficiais. QR Code (WhatsApp Web) não conta: a Meta não o permite. */
+/**
+ * Caminhos oficiais. QR Code (WhatsApp Web) não conta: a Meta não o permite.
+ *
+ * Número descoberto pela conta da Meta (`metadata.origem === 'auth'`) também
+ * não conta: ele envia, mas não recebe, e o passo promete "receba e responda".
+ */
 export const OFFICIAL_WHATSAPP_PROVIDERS = ['messageria', 'whatsapp']
 
 export type ActivationSnapshot = {
-  channels: { provider: string; status: string }[]
+  channels: { provider: string; status: string; metadata?: Record<string, unknown> | null }[]
   activeUsers: number
   contacts: number
   welcomeMessage: string | null
@@ -32,7 +37,9 @@ export type ActivationStep = {
 }
 
 export function hasOfficialWhatsApp(channels: ActivationSnapshot['channels']) {
-  return channels.some((channel) => OFFICIAL_WHATSAPP_PROVIDERS.includes(channel.provider) && channel.status === 'connected')
+  return channels.some(
+    (channel) => OFFICIAL_WHATSAPP_PROVIDERS.includes(channel.provider) && channel.status === 'connected' && channel.metadata?.origem !== 'auth',
+  )
 }
 
 export function activationSteps(snapshot: ActivationSnapshot): ActivationStep[] {

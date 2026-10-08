@@ -19,6 +19,10 @@ test('QR Code (WhatsApp Web) não conta como WhatsApp conectado', () => {
   assert.equal(hasOfficialWhatsApp([{ provider: 'messageria', status: 'error' }]), false)
 })
 
+test('número só descoberto na conta da Meta não fecha o item: ele ainda não recebe', () => {
+  assert.equal(hasOfficialWhatsApp([{ provider: 'whatsapp', status: 'connected', metadata: { origem: 'auth' } }]), false)
+})
+
 test('cada item fecha pelo dado real da conta', () => {
   const steps = activationSteps({
     channels: [{ provider: 'messageria', status: 'connected' }],

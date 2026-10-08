@@ -3,6 +3,7 @@ import test from 'node:test'
 import { describeWhatsAppConnection } from '../../src/lib/whatsappConnection'
 
 const qr = { id: 'q1', provider: 'qrcode', status: 'connecting', phone_number: 'Aguardando leitura', display_name: 'WhatsApp Web QR' }
+const fromAccount = { id: 'a1', provider: 'whatsapp', status: 'connected', phone_number: '+55 16 99234-0000', display_name: 'WhatsApp', metadata: { origem: 'auth' } }
 const direct = { id: 'w1', provider: 'whatsapp', status: 'connected', phone_number: '+55 17 99105-3597', display_name: 'WhatsApp' }
 
 test('sem Messageria e sem canal oficial: desconectado', () => {
@@ -55,6 +56,19 @@ test('só o número de teste da Meta: com restrição', () => {
 test('conta ligada sem número ainda: com restrição', () => {
   const view = describeWhatsAppConnection({ connected: true, baseUrl: 'x', canalId: null, assinaturaRegistrada: true, canais: [] }, [])
   assert.equal(view.state, 'degraded')
+})
+
+test('número vindo da conta da Meta: aparece, mas sem dizer que está conectado', () => {
+  const view = describeWhatsAppConnection({ connected: false }, [fromAccount])
+  assert.equal(view.state, 'degraded')
+  assert.equal(view.via, 'conta-meta')
+  assert.match(view.reason ?? '', /recebimento/)
+  assert.equal(view.numbers[0].label, '(16) 99234-0000')
+})
+
+test('número da conta da Meta desligado não aparece', () => {
+  const view = describeWhatsAppConnection(null, [{ ...fromAccount, status: 'disconnected' }])
+  assert.equal(view.state, 'disconnected')
 })
 
 test('caminho antigo direto na Meta aparece, mas como pendência', () => {

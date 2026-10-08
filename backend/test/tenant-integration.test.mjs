@@ -105,7 +105,7 @@ test('OAuth state cannot write another tenant and Meta status uses session',{ski
   await db.query("insert into integrations(tenant_id,provider,app_id,app_secret) values($1,'meta','123456','testsecret')",[tenantB]);
   assert.equal((await ok('GET','/api/meta/status')).configured,false);assert.equal((await ok('GET','/api/meta/status',undefined,'other')).configured,true);
   assert.equal((await call('GET',`/api/integrations/google/callback?code=fake&state=${tenantB}`)).statusCode,400);
-  assert.equal((await call('POST','/api/meta/exchange',{code:'fake-code',state:'a'.repeat(32),redirectUri:'https://crm.avilaops.com/oauth-callback.html'})).statusCode,400);
+  assert.equal((await call('POST','/api/meta/exchange',{code:'fake-code',state:'a'.repeat(32),redirectUri:'https://crm.avilaops.com/oauth-callback.html'})).statusCode,410);
 });
 test('Meta webhook resolves the registered channel before writing',{skip:!enabled},async()=>{
   await db.query("insert into channels(tenant_id,provider,external_id,display_name,status) values($1,'whatsapp',$2,'B','connected')",[tenantB,`phone-${tenantB}`]);
@@ -114,6 +114,40 @@ test('Meta webhook resolves the registered channel before writing',{skip:!enable
   const r=await app.inject({method:'POST',url:'/api/meta/webhook',headers:{'content-type':'application/json','x-hub-signature-256':signature},payload:raw});assert.equal(r.statusCode,200,r.body);
   const result=await db.query("select tenant_id from messages where external_id='webhook-fixture' and tenant_id=$1",[tenantB]);assert.equal(result.rows[0].tenant_id,tenantB);
   assert.equal((await call('POST','/api/meta/webhook',payload)).statusCode,401);
+});
+test('Meta from auth links only through the SSO session, previews first and stays inside the tenant',{skip:!enabled},async()=>{
+  process.env.SSO_JWT_SECRET='sso-test-secret';process.env.AUTH_META_CLIENT_ID='crm';process.env.AUTH_META_CLIENT_SECRET='fixture';
+  const b64=value=>Buffer.from(JSON.stringify(value)).toString('base64url');
+  const sso=email=>{const body=`${b64({alg:'HS256',typ:'JWT'})}.${b64({iss:'auth.avilaops.com',sub:'sso-user',email,nome:'Fixture',papel:'CLIENTE',exp:Math.floor(Date.now()/1000)+600})}`;return `avila_sso=${body}.${createHmac('sha256','sso-test-secret').update(body).digest('base64url')}`};
+  const post=(cookie,body)=>app.inject({method:'POST',url:'/api/meta/sincronizar',headers:{cookie},payload:body});
+  const original=globalThis.fetch,requests=[];
+  globalThis.fetch=async url=>{requests.push(String(url));return Response.json({conta:{id:'c1',email:'admin@example.test'},meta:{usuarioId:'fb1',nome:'Dona A',escopos:['whatsapp_business_management'],expiraEm:'2027-01-01T00:00:00.000Z'},token:'token-do-auth',ativos:[{tipo:'whatsapp',externoId:'waba-a',nome:'Loja A',detalhe:{negocio:'Loja A',numeros:'+55 16 99234-0000',numeroIds:`num-${tenantA}`},token:null}]})};
+  try {
+    // Password-only session: the CRM cannot tell whose Meta connection this is.
+    assert.equal((await post(cookies.admin,{confirmar:true})).statusCode,409);
+    // SSO cookie of somebody else does not link either.
+    assert.equal((await post(`${cookies.admin}; ${sso('other@example.test')}`,{confirmar:true})).statusCode,409);
+    assert.equal((await post(`${cookies.agent}; ${sso('agent@example.test')}`,{confirmar:true})).statusCode,403);
+    assert.equal(requests.length,0);
+    const cookie=`${cookies.admin}; ${sso('admin@example.test')}`;
+    const preview=(await post(cookie,{})).json();assert.equal(preview.previa,true);assert.deepEqual(preview.numeros,['+55 16 99234-0000']);
+    assert.equal((await db.query("select count(*)::int as n from integrations where tenant_id=$1 and provider='meta'",[tenantA])).rows[0].n,0);
+    const saved=await post(cookie,{confirmar:true});assert.equal(saved.statusCode,200,saved.body);assert.ok(!saved.body.includes('token-do-auth'));
+    const status=saved.json();assert.equal(status.connected,true);assert.equal(status.origem,'auth');assert.equal(status.conta,'admin@example.test');assert.equal(status.numeros,1);assert.equal(status.criados,1);
+    assert.ok(requests[0].includes('/api/meta/ativos?email=admin%40example.test'));
+    const row=(await db.query("select access_token,app_secret from integrations where tenant_id=$1 and provider='meta'",[tenantA])).rows[0];assert.ok(row.access_token.startsWith('v1:'));assert.equal(row.app_secret,null);
+    const channel=(await db.query("select tenant_id,status,phone_number,metadata from channels where provider='whatsapp' and external_id=$1",[`num-${tenantA}`])).rows;
+    assert.equal(channel.length,1);assert.equal(channel[0].tenant_id,tenantA);assert.equal(channel[0].metadata.origem,'auth');assert.equal(channel[0].phone_number,'+55 16 99234-0000');
+    // The other tenant keeps its own legacy credentials and sees nothing of this.
+    const foreign=await ok('GET','/api/meta/status',undefined,'other');assert.equal(foreign.origem,null);assert.equal(foreign.conta,null);assert.equal(foreign.configured,true);
+    assert.equal((await db.query("select app_secret from integrations where tenant_id=$1 and provider='meta'",[tenantB])).rows[0].app_secret,'testsecret');
+    // Same account again: no confirmation needed, nothing duplicated.
+    const again=(await post(cookie,{})).json();assert.equal(again.previa,false);assert.equal(again.atualizados,1);
+    assert.equal((await db.query("select count(*)::int as n from events where tenant_id=$1 and event_type='meta.sincronizada_pelo_auth' and payload::text like '%token-do-auth%'",[tenantA])).rows[0].n,0);
+    for(const url of ['/api/meta/credentials','/api/meta/sync-channels'])assert.equal((await call('POST',url,{})).statusCode,410,url);
+    const off=await ok('POST','/api/meta/disconnect',{});assert.equal(off.connected,false);assert.equal(off.origem,null);
+    assert.equal((await db.query("select status from channels where tenant_id=$1 and external_id=$2",[tenantA,`num-${tenantA}`])).rows[0].status,'disconnected');
+  } finally {globalThis.fetch=original;for(const name of ['SSO_JWT_SECRET','AUTH_META_CLIENT_ID','AUTH_META_CLIENT_SECRET'])delete process.env[name]}
 });
 test('calendar updates, cancellation, reopening and failures are auditable without external calls',{skip:!enabled},async()=>{
   const task=(await db.query("insert into tasks(tenant_id,title,due_at) values($1,'Calendar fixture','2026-10-01T12:00:00Z') returning *",[tenantA])).rows[0];

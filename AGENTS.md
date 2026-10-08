@@ -47,6 +47,21 @@ Segurança é requisito básico, mas não deve limitar a exploração de ideias.
 - utilizar TypeScript e variáveis de ambiente;
 - preservar integrações existentes ou explicar claramente quando uma mudança estrutural trouxer benefícios.
 
+## Conta da Meta (decisão de 08/10/2026)
+
+A conexão do cliente com a Meta mora no `auth.avilaops.com`; o CRM só lê, por
+`backend/auth-meta.ts`. Não recriar OAuth da Meta aqui, nem pedir App ID, App
+Secret ou token em tela.
+
+- O vínculo usa o e-mail do cookie `avila_sso` conferido, nunca `users.email`
+  sozinho: esse campo o administrador da empresa edita.
+- O upsert em `integrations` não toca `app_id` nem `app_secret`: o webhook
+  direto de quem ainda o usa depende deles.
+- Canal com `metadata.origem = 'auth'` envia e não recebe. Ele não fecha o item
+  "Conectar o WhatsApp" nem aparece como conectado.
+- Só "não conectou" (404) e "venceu" (409) do auth apagam o token guardado. Erro
+  de rede ou 5xx deixam como está.
+
 ## Visão Do Portal
 
 O portal `cliente.avilaops.com` deve evoluir para um sistema operacional digital para pequenas empresas: o cliente entra, informa o que deseja construir e a plataforma organiza domínio, site, e-mail, identidade, redes sociais, pagamentos, automações e suporte em uma jornada única.
