@@ -12,7 +12,7 @@ export default function PipelineSettings({ onSelect, onChanged }: {onSelect:(id:
   const [id,setId]=useState<string>()
   const [error,setError]=useState('')
   const [busy,setBusy]=useState(false)
-  function reload(){return api<{pipelines:EditablePipeline[]}>('/api/pipelines').then(r=>setPipelines(r.pipelines)).catch(e=>setError(e.message))}
+  function reload(){return api<{pipelines:EditablePipeline[]}>('/api/pipelines').then(r=>setPipelines(r.pipelines ?? [])).catch(e=>setError(e.message))}
   useEffect(()=>{void reload()},[])
   function edit(p?:EditablePipeline){setId(p?.id);setName(p?.name??'');setStages(p?.stages??[{name:'Entrada',color:'#3b82f6',required_fields:[]}]);setEditing(true);setError('')}
   async function save(e:FormEvent){e.preventDefault();setBusy(true);setError('');try{const r=await api<{pipeline:EditablePipeline}>(id?`/api/pipelines/${id}`:'/api/pipelines',{method:id?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,stages})});await reload();setSelected(r.pipeline.id);onSelect(r.pipeline.id);onChanged();setEditing(false)}catch(e){setError(e instanceof Error?e.message:'Falha ao salvar.')}finally{setBusy(false)}}
