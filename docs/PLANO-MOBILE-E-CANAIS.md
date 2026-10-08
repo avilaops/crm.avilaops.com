@@ -41,7 +41,8 @@ rolagem horizontal nem campo cortado.
 | MP-05 | Funil no celular, uma etapa por vez | ✅ antecipado (abas com contagem e soma em R$, "Mover para…" no card) | `Pipeline` em `WorkspacePages.tsx` |
 | MP-06 | Listas que viram cartões | ✅ antecipado em Contatos, Leads e Empresas | `DataTable` em `WorkspacePages.tsx` |
 | CP-01 | Tech Provider na Meta | ❌ processo externo; caminho crítico do MP-01 | — |
-| CP-05, CP-07, CP-10, MP-01 a MP-04, MP-07 a MP-10 | — | ❌ não iniciados | — |
+| CP-07 | Importação CSV/vCard com base legal e deduplicação | ✅ (08/10/2026) arquivo, colunas, origem e base legal obrigatórias, repetidos, resumo e desfazer por 24 h. Sem XLSX; repetido é "completar" ou "não mexer", sem "criar novo" | `backend/contact-import.ts`, `backend/routes-import.ts`, `src/components/contacts/ImportContactsSheet.tsx` |
+| CP-05, CP-10, MP-01 a MP-04, MP-07 a MP-10 | — | ❌ não iniciados | — |
 
 Também entraram, porque apareceram no caminho:
 
@@ -249,8 +250,11 @@ Na ordem do plano, com o ajuste da decisão 1:
    **MP-01** no CRM (popup, estados `pending`/`syncing`, contatos e histórico).
 3. **CP-05** modelo de conexão para as integrações do CRM (ERP, Google, n8n,
    pagamentos), com `audit_log` em toda mudança de estado.
-4. **CP-07** importação CSV/vCard com base legal e deduplicação — destrava
-   "Dados e privacidade" e o item "Trazer seus contatos" sem WhatsApp.
+4. ~~**CP-07** importação CSV/vCard~~ — feito em 08/10/2026. Ficou de fora:
+   XLSX (a pessoa salva como CSV), a opção "criar novo" para repetido (o
+   telefone é único por empresa) e a tela "Dados e privacidade", que agora tem
+   de onde tirar a base legal de cada contato (`contacts.legal_basis`,
+   `contact_imports`).
 5. **MP-03/MP-04** custo estimado antes de enviar modelo pago e consumo real no
    Faturamento, quando a Messageria informar o custo por mensagem.
 6. **MP-09** migração dos canais por QR que ainda existirem.

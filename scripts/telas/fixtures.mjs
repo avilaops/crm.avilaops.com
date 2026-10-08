@@ -110,6 +110,7 @@ export function routeApi(url, method) {
   if (path === '/api/auth/sso/enabled') return { enabled: false, url: '' }
   if (path === '/api/bootstrap') return { tenant: { id: tenantId, name: 'Transportes Rio Pardo' }, users, currentUser: sessionUser, contacts, channels, conversations: [], messages: [], leads, tasks: [], companies: [] }
   if (path === '/api/users') return { users }
+  if (path === '/api/realtime/presence') return { users: [{ id: sessionUser.id, name: sessionUser.name }] }
   if (path === '/api/channels') return { channels }
   if (path === '/api/conversations') return { conversations, pagination: { page: 1, pageSize: 30, total: conversations.length }, unread: { messages: 2, conversations: 1 } }
   const msg = path.match(/^\/api\/conversations\/([^/]+)\/messages$/)

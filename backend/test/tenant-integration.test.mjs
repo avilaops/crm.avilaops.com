@@ -149,6 +149,35 @@ test('Meta from auth links only through the SSO session, previews first and stay
     assert.equal((await db.query("select status from channels where tenant_id=$1 and external_id=$2",[tenantA,`num-${tenantA}`])).rows[0].status,'disconnected');
   } finally {globalThis.fetch=original;for(const name of ['SSO_JWT_SECRET','AUTH_META_CLIENT_ID','AUTH_META_CLIENT_SECRET'])delete process.env[name]}
 });
+test('contact import previews, dedups by phone and e-mail, records the legal basis and can be undone',{skip:!enabled},async()=>{
+  await db.query("insert into contacts(tenant_id,name,phone) values($1,'Existing A','+55 16 99234-0000'),($2,'Existing B','+5516977776666')",[tenantA,tenantB]);
+  const content=['Nome;Celular;E-mail;Etiquetas','Maria;(16) 99234-0000;maria@a.test;vip','Novo;16988887777;novo@a.test;','De B;16977776666;;','Ruim;123;;'].join('\n');
+  const file={fileName:'clientes.csv',content};
+  for(const [method,url] of [['POST','/api/contacts/import/preview'],['GET','/api/contacts/imports']])assert.equal((await call(method,url,method==='POST'?file:undefined,'agent')).statusCode,403,url);
+  const preview=await ok('POST','/api/contacts/import/preview',file);
+  assert.deepEqual(preview.mapping,{name:0,phone:1,email:2,tags:3});assert.deepEqual(preview.totals,{rows:4,novos:2,jaExistem:1,repetidosNoArquivo:0,invalidos:1});
+  const base={...file,mapping:preview.mapping,onDuplicate:'update',tags:['lote']};
+  assert.equal((await call('POST','/api/contacts/import',base)).statusCode,400);
+  const done=await ok('POST','/api/contacts/import',{...base,legalBasis:'contrato',originNote:'Clientes do sistema antigo'},'admin',201);
+  assert.deepEqual(done.summary,{created:2,updated:1,kept:0,skipped:0,invalid:1,repeatedInFile:0});assert.equal(done.rejected[0].reason,'Telefone inválido');
+  const existing=(await db.query("select name,phone,email,tags,import_id from contacts where tenant_id=$1 and name='Existing A'",[tenantA])).rows[0];
+  assert.equal(existing.phone,'+55 16 99234-0000');assert.equal(existing.email,'maria@a.test');assert.deepEqual(existing.tags.sort(),['lote','vip']);assert.equal(existing.import_id,null);
+  const created=(await db.query("select name,phone,source,legal_basis from contacts where tenant_id=$1 and import_id=$2 order by name",[tenantA,done.importId])).rows;
+  assert.deepEqual(created,[{name:'De B',phone:'+5516977776666',source:'importacao',legal_basis:'contrato'},{name:'Novo',phone:'+5516988887777',source:'importacao',legal_basis:'contrato'}]);
+  // The other tenant keeps its own contact untouched and cannot see or undo this batch.
+  assert.equal((await db.query("select count(*)::int as n from contacts where tenant_id=$1 and import_id is not null",[tenantB])).rows[0].n,0);
+  assert.deepEqual((await ok('GET','/api/contacts/imports',undefined,'other')).imports,[]);
+  assert.equal((await call('POST',`/api/contacts/imports/${done.importId}/undo`,{},'other')).statusCode,409);
+  // Importing the same file again creates nothing.
+  assert.equal((await ok('POST','/api/contacts/import',{...base,onDuplicate:'keep',legalBasis:'contrato',originNote:'Repeticao'},'admin',201)).summary.created,0);
+  // A contact already in use survives the undo.
+  const used=(await db.query("select id from contacts where tenant_id=$1 and import_id=$2 and name='Novo'",[tenantA,done.importId])).rows[0].id;
+  await db.query('insert into conversations(tenant_id,contact_id) values($1,$2)',[tenantA,used]);
+  const undone=await ok('POST',`/api/contacts/imports/${done.importId}/undo`,{});assert.deepEqual(undone,{removed:1,keptInUse:1,updatedNotReverted:1});
+  assert.equal((await call('POST',`/api/contacts/imports/${done.importId}/undo`,{})).statusCode,409);
+  const history=(await ok('GET','/api/contacts/imports')).imports;assert.equal(history.length,2);assert.equal(history.find(item=>item.id===done.importId).can_undo,false);
+  assert.equal((await db.query("select count(*)::int as n from events where tenant_id=$1 and event_type in ('contact.imported','contact.import_undone')",[tenantA])).rows[0].n,3);
+});
 test('calendar updates, cancellation, reopening and failures are auditable without external calls',{skip:!enabled},async()=>{
   const task=(await db.query("insert into tasks(tenant_id,title,due_at) values($1,'Calendar fixture','2026-10-01T12:00:00Z') returning *",[tenantA])).rows[0];
   await db.query("insert into integrations(tenant_id,provider,access_token) values($1,'google_calendar','fixture-token')",[tenantA]);

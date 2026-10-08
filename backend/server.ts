@@ -19,6 +19,7 @@ import { assertSendWindow, registerWhatsAppTemplateRoutes, WINDOW_SELECT_SQL } f
 import { enviar as enviarPelaMessageria, getConnection as conexaoMessageria, MessageriaRequestError, registerMessageriaRoutes } from "./messageria.js";
 import { paginaDaMeta, precisaRenovar, registerAuthMetaRoutes, renovarConexaoMeta, type CanalDescoberto } from "./auth-meta.js";
 import { registerMailRoutes } from "./routes-mail.js";
+import { registerImportRoutes } from "./routes-import.js";
 import { startAutomation } from "./automation.js";
 import { registerAiRoutes } from "./routes-ai.js";
 import { registerProductRoutes } from "./routes-products.js";
@@ -2436,6 +2437,7 @@ export async function buildApp(options: { background?: boolean } = {}) {
     touchConversationAfterSend,
     decryptSecret,
   });
+  registerImportRoutes(app, { requireAuth, canManage, recordEvent });
   registerAuthMetaRoutes(app, {
     requireAuth,
     canManage,
