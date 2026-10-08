@@ -110,7 +110,7 @@ A referencia completa esta em [`docs/CLI-E-NPM.md`](docs/CLI-E-NPM.md).
 
 Todo push na `main` passa pelo pipeline da plataforma ([`.github/workflows/deploy-production.yml`](.github/workflows/deploy-production.yml)): valida, constrói a imagem e, com o deploy ligado, implanta pelo despachante do `avilaops/infra`, que volta à versão anterior sozinho se a nova não responder. Como ligar, o que o servidor precisa e como desfazer: [`docs/OPERACAO.md`](docs/OPERACAO.md).
 
-O app expõe apenas `127.0.0.1:3020` no host. O Postgres fica somente na rede Docker `agenda-crm`.
+Em produção o container não publica porta: o Caddy do servidor chega nele pela rede `edge`, e o banco é o PostgreSQL do host. O retrato atual está no começo do [`docs/OPERACAO.md`](docs/OPERACAO.md).
 
 ## Banco local
 
