@@ -23,10 +23,11 @@ import SegmentsPage from './SegmentsPage'
 import MediaPage from './MediaPage'
 import TeamChatPage from './TeamChatPage'
 import AllContactsPage from './AllContactsPage'
+import { ImportContactsSheet } from '../../components/contacts/ImportContactsSheet'
 import CreateLeadModal from '../../components/modals/CreateLeadModal'
 import ContactDetailDrawer from '../../components/drawers/ContactDetailDrawer'
 import LeadDetailDrawer from '../../components/drawers/LeadDetailDrawer'
-import { Archive, CheckCircle2, ChevronLeft, ChevronRight, Clock, FileText, MessageCircle, Paperclip, Plus, RefreshCw, Search, Send, SlidersHorizontal, Trash2, UserRound, X } from 'lucide-react'
+import { Archive, CheckCircle2, ChevronLeft, ChevronRight, Clock, FileText, FileUp, MessageCircle, Paperclip, Plus, RefreshCw, Search, Send, SlidersHorizontal, Trash2, UserRound, X } from 'lucide-react'
 import { createGoogleCalendarUrl } from '../../lib/googleCalendar'
 import {
   ApiError,
@@ -1610,6 +1611,8 @@ function ContactsList() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [selectedContactId, setSelectedContactId] = useState<string | null>(null)
+  const [importOpen, setImportOpen] = useState(false)
+  const { canManage } = useSession()
 
   const loadContacts = () => {
     setLoading(true)
@@ -1633,12 +1636,21 @@ function ContactsList() {
   return (
     <DataPage title="Contatos" tab={`${total} contato(s)`} search={search} setSearch={setSearch} error={error}>
       <ContactCreate onCreated={loadContacts} />
+      {canManage && (
+        <div className="flex justify-end px-4 pt-3 medium:px-6">
+          <button type="button" className={buttonClass.secondary} onClick={() => setImportOpen(true)}>
+            <FileUp size={16} aria-hidden="true" />
+            Importar contatos
+          </button>
+        </div>
+      )}
+      <ImportContactsSheet open={importOpen} onClose={() => setImportOpen(false)} onImported={loadContacts} />
       <DataTable
         columns={['Nome', 'Empresa', 'Telefone', 'E-mail', 'Origem', 'Atualizado']}
         cards={
           <CardList>
             {loading && contacts.length === 0 && <CardMessage text="Carregando contatos…" />}
-            {!loading && contacts.length === 0 && <CardMessage text={search ? 'Nenhum contato encontrado.' : 'Nenhum contato ainda. Quem escreve no WhatsApp entra aqui sozinho.'} />}
+            {!loading && contacts.length === 0 && <CardMessage text={search ? 'Nenhum contato encontrado.' : 'Nenhum contato ainda. Quem escreve no WhatsApp entra aqui sozinho, e você pode importar sua planilha ou a agenda do celular.'} />}
             {contacts.map((contact) => (
               <CardRow
                 key={contact.id}

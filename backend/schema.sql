@@ -792,3 +792,27 @@ create table if not exists crm_oauth_states (
  user_id uuid not null references users(id) on delete cascade, provider text not null,
  redirect_uri text not null, expires_at timestamptz not null
 );
+
+-- Importação de contatos por arquivo (backend/routes-import.ts). Cada lote
+-- guarda de onde a lista veio, a base legal e quem importou; os contatos que
+-- ele cria apontam para o lote, o que permite desfazer por 24 horas.
+create table if not exists contact_imports (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null references tenants(id) on delete cascade,
+  user_id uuid references users(id) on delete set null,
+  file_name text not null,
+  source_kind text not null,
+  legal_basis text not null,
+  origin_note text not null,
+  on_duplicate text not null default 'update',
+  created_count int not null default 0,
+  updated_count int not null default 0,
+  skipped_count int not null default 0,
+  invalid_count int not null default 0,
+  created_at timestamptz not null default now(),
+  undone_at timestamptz
+);
+create index if not exists contact_imports_tenant_idx on contact_imports(tenant_id, created_at desc);
+alter table contacts add column if not exists import_id uuid references contact_imports(id) on delete set null;
+alter table contacts add column if not exists legal_basis text;
+create index if not exists contacts_import_idx on contacts(tenant_id, import_id) where import_id is not null;
