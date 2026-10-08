@@ -1,0 +1,46 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-server
+dist-ssr
+.env
+.env.*
+!.env.example
+!.env.production.example
+!.env.publish.example
+*.local
+*.tgz
+coverage
+.server.pid
+.wrangler
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Pacote de release, gerado pelo deploy
+release.tar.gz
+
+# Capturas de tela do Kommo, usadas como referência visual quando este
+# painel foi montado. Não são nossas e pesam 6,6 MB.
+assets/
+
+Dockerfile.qa
+output/
+.playwright-cli/
+telas-capturas/

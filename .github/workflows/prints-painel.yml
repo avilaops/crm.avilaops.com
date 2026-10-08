@@ -1,0 +1,66 @@
+name: Prints do painel
+# Captura as telas do CRM com a API simulada, para revisão visual no PR: 22
+# telas em 375, 390, 768, 1024 e 1440 px. Quem captura é o
+# scripts/telas/verificar.mjs, o mesmo que mediu o antes e o depois do layout
+# mobile; além das imagens, ele reprova o job se alguma tela de celular ou de
+# tablet rolar para o lado ou cortar campo.
+#
+# Veio do app.avilaops.com, onde o painel é Next.js com Prisma e precisa de
+# banco descartável e dados semeados. Aqui o painel é um SPA do Vite e a API é
+# respondida pelo scripts/telas/fixtures.mjs dentro do navegador: não sobe
+# banco, não publica imagem e não usa segredo.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "public/**"
+      - "index.html"
+      - "vite.config.ts"
+      # Atualizar React, Tailwind, Vite ou Radix muda as telas sem tocar em
+      # nenhuma das pastas acima.
+      - "package.json"
+      - "package-lock.json"
+      - "scripts/telas/**"
+      - ".github/workflows/prints-painel.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  prints:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      # Fora do package.json de propósito: o Chromium pesa e só este job usa.
+      - name: Playwright
+        run: |
+          npm install --no-save playwright@1.62.1
+          npx playwright install --with-deps chromium
+      - name: Subir o painel
+        run: |
+          npx vite --host 127.0.0.1 --port 5173 --strictPort > vite.log 2>&1 &
+          for _ in $(seq 1 60); do
+            curl -sf http://127.0.0.1:5173/ > /dev/null && exit 0
+            sleep 1
+          done
+          echo "O Vite não respondeu em 60 s." >&2
+          exit 1
+      - name: Capturar e conferir
+        run: node scripts/telas/verificar.mjs prints
+      - name: Log do Vite
+        if: always()
+        run: tail -n 100 vite.log || true
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: prints-painel
+          path: prints/
+          retention-days: 14

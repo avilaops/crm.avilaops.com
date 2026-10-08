@@ -1,0 +1,5 @@
+# Área interna (CRM) — não deve aparecer em buscadores.
+# O noindex fica na meta tag do index.html; aqui não usamos Disallow
+# porque bloquear o rastreio impediria o Google de ver o próprio noindex.
+User-agent: *
+Allow: /
