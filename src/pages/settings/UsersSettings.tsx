@@ -1,9 +1,10 @@
 import { UserPlus } from 'lucide-react'
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { FormField, FormSection, Notice } from '../../components/ui/Form'
 import { ToneBadge } from '../../components/ui/StatusBadge'
 import type { Tone } from '../../lib/connection'
-import { createUser, listUsers, updateUser, type CrmUser } from '../../lib/crm'
+import { createUser, inviteUser, listUsers, updateUser, type CrmUser } from '../../lib/crm'
+import { afterInvite, inviteLine } from '../../lib/userInvite'
 import { initials, useSession } from '../../lib/session'
 import { buttonClass } from '../../lib/ui'
 import { SettingsFrame } from './SettingsFrame'
@@ -30,6 +31,7 @@ export function UsersSettings() {
   const [users, setUsers] = useState<CrmUser[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [resending, setResending] = useState<string | null>(null)
   const [feedback, setFeedback] = useState<Feedback>(null)
   const [form, setForm] = useState(emptyForm)
   const [version, setVersion] = useState(0)
@@ -46,19 +48,43 @@ export function UsersSettings() {
     }
   }, [version])
 
+  // Trava síncrona: dois toques no mesmo instante passam pelo `disabled`, que só
+  // vale depois do próximo desenho, e cada envio a mais é um e-mail a mais.
+  const sending = useRef(false)
+
   async function invite(event: FormEvent) {
     event.preventDefault()
+    if (sending.current) return
+    sending.current = true
     setSaving(true)
     setFeedback(null)
     try {
-      await createUser({ name: form.name.trim(), email: form.email.trim(), role: form.role, password: form.password || undefined })
+      const { user } = await createUser({ name: form.name.trim(), email: form.email.trim(), role: form.role, password: form.password || undefined })
       setForm(emptyForm)
-      setFeedback({ tone: 'success', text: `${form.name.trim()} já pode entrar no CRM.` })
+      setFeedback(afterInvite(user, 'adicionada'))
       reload()
     } catch (error) {
       setFeedback({ tone: 'danger', text: error instanceof Error ? error.message : 'Não foi possível adicionar a pessoa.' })
     } finally {
+      sending.current = false
       setSaving(false)
+    }
+  }
+
+  async function resend(userId: string) {
+    if (sending.current) return
+    sending.current = true
+    setResending(userId)
+    setFeedback(null)
+    try {
+      const { user } = await inviteUser(userId)
+      setUsers((current) => current.map((item) => (item.id === userId ? user : item)))
+      setFeedback(afterInvite(user, 'convidada'))
+    } catch (error) {
+      setFeedback({ tone: 'danger', text: error instanceof Error ? error.message : 'Não foi possível enviar o convite.' })
+    } finally {
+      sending.current = false
+      setResending(null)
     }
   }
 
@@ -106,7 +132,7 @@ export function UsersSettings() {
                   ))}
                 </select>
               </FormField>
-              <FormField label="Senha inicial" hint="Deixe em branco se a pessoa entra pela conta Ávila Ops.">
+              <FormField label="Senha inicial" hint="Deixe em branco: a pessoa recebe um convite por e-mail e cria a própria senha na conta Ávila Ops.">
                 <input
                   className="input"
                   type="password"
@@ -147,6 +173,7 @@ export function UsersSettings() {
                         {!item.active && <ToneBadge tone="neutral">Desativado</ToneBadge>}
                       </p>
                       <p className="truncate text-sm text-slate-500">{item.email}</p>
+                      {inviteLine(item) && <p className="text-xs text-slate-500">{inviteLine(item)}</p>}
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
@@ -162,6 +189,11 @@ export function UsersSettings() {
                         <option key={role.value} value={role.value}>{role.label}</option>
                       ))}
                     </select>
+                    {!self && item.active && (
+                      <button type="button" className={buttonClass.secondary} disabled={resending !== null} onClick={() => resend(item.id)}>
+                        {resending === item.id ? 'Enviando…' : item.invite_status ? 'Enviar convite de novo' : 'Enviar convite'}
+                      </button>
+                    )}
                     {!self && (
                       <button type="button" className={buttonClass.secondary} onClick={() => change(item.id, { active: !item.active })}>
                         {item.active ? 'Desativar' : 'Reativar'}

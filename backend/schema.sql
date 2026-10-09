@@ -21,6 +21,11 @@ create table if not exists users (
 
 alter table users add column if not exists password_hash text;
 alter table users add column if not exists active boolean not null default true;
+-- O que aconteceu com o convite por e-mail (enviado, falhou, pendente). O
+-- endereco de criar a senha nunca e guardado.
+alter table users add column if not exists invite_status text;
+alter table users add column if not exists invite_detail text;
+alter table users add column if not exists invite_at timestamptz;
 
 create table if not exists sessions (
   id uuid primary key default gen_random_uuid(),

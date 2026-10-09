@@ -17,6 +17,7 @@ import { publishRealtime, publishRealtimeAsync, registerRealtimeRoutes, startRea
 import { ingestInboundMedia, maxMediaBytes, registerWhatsAppMediaRoutes, WHATSAPP_MEDIA_TYPES } from "./whatsapp-media.js";
 import { assertSendWindow, registerWhatsAppTemplateRoutes, WINDOW_SELECT_SQL } from "./whatsapp-templates.js";
 import { enviar as enviarPelaMessageria, getConnection as conexaoMessageria, MessageriaRequestError, registerMessageriaRoutes } from "./messageria.js";
+import { convidarPelaContaAvila } from "./auth-convite.js";
 import { paginaDaMeta, precisaRenovar, registerAuthMetaRoutes, renovarConexaoMeta, type CanalDescoberto } from "./auth-meta.js";
 import { registerMailRoutes } from "./routes-mail.js";
 import { registerImportRoutes } from "./routes-import.js";
@@ -76,6 +77,21 @@ type AuthUser = {
   name: string;
   email: string;
   role: string;
+};
+
+/** O que as rotas de usuario devolvem. Nunca o hash da senha. */
+const USER_COLUMNS = "id, name, email, role, active, created_at, invite_status, invite_detail, invite_at";
+
+type InvitedUser = {
+  id: string;
+  name: string;
+  email: string;
+  role: string;
+  active: boolean;
+  created_at: string;
+  invite_status: string | null;
+  invite_detail: string | null;
+  invite_at: string | null;
 };
 
 type RawBodyRequest = FastifyRequest & { rawBody?: Buffer };
@@ -860,6 +876,29 @@ async function recordEvent(tenantId: string, entityType: string, eventType: stri
   ]);
 }
 
+/**
+ * Convida a pessoa pela conta Avila Ops e guarda o que aconteceu com o convite
+ * no cadastro dela, para a lista de usuarios. O evento leva so o resultado.
+ */
+async function inviteUser(admin: AuthUser, target: InvitedUser, requestId?: string | null): Promise<InvitedUser> {
+  const tenant = await query<{ name: string; slug: string }>("select name, slug from tenants where id = $1", [admin.tenant_id]);
+  const invite = await convidarPelaContaAvila({
+    email: target.email,
+    nome: target.name,
+    empresa: tenant.rows[0]?.name ?? "",
+    slugDaEmpresa: tenant.rows[0]?.slug ?? "",
+    convidadoPor: admin.name,
+  });
+  const saved = await query<InvitedUser>(
+    `update users set invite_status = $3, invite_detail = $4, invite_at = now()
+     where tenant_id = $1 and id = $2
+     returning ${USER_COLUMNS}`,
+    [admin.tenant_id, target.id, invite.status, invite.detalhe],
+  );
+  await recordEvent(admin.tenant_id, "user", "user.invited", { email: target.email, status: invite.status }, admin.id, target.id, requestId);
+  return saved.rows[0] ?? target;
+}
+
 export async function buildApp(options: { background?: boolean } = {}) {
   const app = Fastify({ logger: process.env.NODE_ENV !== "test" });
   renovacaoMetaLigada = options.background !== false;
@@ -1076,7 +1115,7 @@ export async function buildApp(options: { background?: boolean } = {}) {
     const user = await requireAuth(request, reply);
     if (!user) return;
     const result = await query(
-      `select id, name, email, role, active, created_at
+      `select ${USER_COLUMNS}
        from users
        where tenant_id = $1
        order by created_at asc`,
@@ -1092,14 +1131,19 @@ export async function buildApp(options: { background?: boolean } = {}) {
     const body = createUserSchema.parse(request.body);
     const passwordHash = body.password ? await hashPassword(body.password) : null;
     try {
-      const result = await query(
+      const result = await query<InvitedUser>(
         `insert into users (tenant_id, name, email, role, password_hash, active)
          values ($1, $2, lower($3), $4, $5, true)
-         returning id, name, email, role, active, created_at`,
+         returning ${USER_COLUMNS}`,
         [user.tenant_id, body.name, body.email, body.role, passwordHash],
       );
-      await recordEvent(user.tenant_id, "user", "user.created", { email: body.email, role: body.role }, user.id, result.rows[0].id, (request as RequestWithId).requestId);
-      return reply.code(201).send({ user: result.rows[0] });
+      const requestId = (request as RequestWithId).requestId;
+      await recordEvent(user.tenant_id, "user", "user.created", { email: body.email, role: body.role }, user.id, result.rows[0].id, requestId);
+      // Sem senha inicial a pessoa entra pela conta Avila Ops: o convite por
+      // e-mail leva o endereco para criar a senha. Com senha inicial, quem
+      // cadastrou escolheu avisar por conta propria.
+      const created = passwordHash ? result.rows[0] : await inviteUser(user, result.rows[0], requestId);
+      return reply.code(201).send({ user: created });
     } catch (error) {
       if (typeof error === "object" && error && "code" in error && error.code === "23505") {
         return reply.code(409).send({ error: "Ja existe um usuario com este email." });
@@ -1127,7 +1171,7 @@ export async function buildApp(options: { background?: boolean } = {}) {
              active = coalesce($6, active),
              password_hash = coalesce($7, password_hash)
          where tenant_id = $1 and id = $2
-         returning id, name, email, role, active, created_at`,
+         returning ${USER_COLUMNS}`,
         [user.tenant_id, id, body.name ?? null, body.email ?? null, body.role ?? null, body.active ?? null, passwordHash ?? null],
       );
       if (!result.rows[0]) return reply.code(404).send({ error: "Usuario nao encontrado." });
@@ -1139,6 +1183,22 @@ export async function buildApp(options: { background?: boolean } = {}) {
       }
       throw error;
     }
+  });
+
+  // "Enviar convite de novo": a mesma mensagem do cadastro, outra vez.
+  app.post("/api/users/:id/invite", async (request, reply) => {
+    const user = await requireAuth(request, reply);
+    if (!user) return;
+    if (user.role !== "admin") return reply.code(403).send({ error: "Permissao insuficiente." });
+    const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+    // Um toque repetido nao vira uma fila de e-mails na caixa da pessoa.
+    if (!checkRateLimit(`convite:${user.tenant_id}:${id}`, 3, 10 * 60 * 1000)) {
+      return reply.code(429).send({ error: "Convite enviado ha pouco. Aguarde alguns minutos para enviar de novo." });
+    }
+    const found = await query<InvitedUser>(`select ${USER_COLUMNS} from users where tenant_id = $1 and id = $2`, [user.tenant_id, id]);
+    if (!found.rows[0]) return reply.code(404).send({ error: "Usuario nao encontrado." });
+    if (!found.rows[0].active) return reply.code(400).send({ error: "Reative a pessoa antes de enviar o convite." });
+    return { user: await inviteUser(user, found.rows[0], (request as RequestWithId).requestId) };
   });
 
   app.get("/api/meta/status", async (request, reply) => {
