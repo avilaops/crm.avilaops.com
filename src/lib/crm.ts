@@ -73,6 +73,10 @@ export type CrmUser = {
   role: string
   active: boolean
   created_at: string
+  /** O que aconteceu com o convite por e-mail; nulo para quem nunca foi convidado. */
+  invite_status?: 'enviado' | 'falhou' | 'pendente' | null
+  invite_detail?: string | null
+  invite_at?: string | null
 }
 
 export type CrmContact = {
@@ -187,6 +191,11 @@ export function createUser(input: { name: string; email: string; role: string; p
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(input),
   })
+}
+
+/** "Enviar convite de novo": a conta Ávila Ops escreve outra vez para a pessoa. */
+export function inviteUser(userId: string) {
+  return api<{ user: CrmUser }>(`/api/users/${userId}/invite`, { method: 'POST' })
 }
 
 export function updateUser(userId: string, input: Partial<{ name: string; email: string; role: string; active: boolean; password: string }>) {
