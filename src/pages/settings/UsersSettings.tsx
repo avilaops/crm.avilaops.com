@@ -176,9 +176,11 @@ export function UsersSettings() {
                       {inviteLine(item) && <p className="text-xs text-slate-500">{inviteLine(item)}</p>}
                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
+                  {/* No celular o papel ocupa a linha e os botões vão para a de baixo:
+                      os três lado a lado não cabem em 375px. */}
+                  <div className="flex flex-wrap items-center gap-2">
                     <select
-                      className="input w-auto! min-w-0 flex-1 medium:flex-none"
+                      className="input w-auto! min-w-0 flex-1 basis-full medium:flex-none medium:basis-auto"
                       aria-label={`Papel de ${item.name}`}
                       value={item.role === 'manager' ? 'gerente' : item.role}
                       disabled={self}
