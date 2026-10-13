@@ -106,11 +106,11 @@ export default function AppShell({ children, aside }: { children: ReactNode; asi
 
 function Brand({ compact = false }: { compact?: boolean }) {
   return compact ? (
-    <span className="grid size-10 place-items-center rounded-xl bg-slate-900 text-base font-black italic text-white" aria-label="Agenda">
-      A
+    <span className="grid size-10 place-items-center rounded-xl bg-slate-900 text-base font-black italic text-white" aria-label="Ávila CRM">
+      Á
     </span>
   ) : (
-    <span className="text-2xl font-black italic text-slate-900">Agenda</span>
+    <span className="text-2xl font-black italic text-slate-900">Ávila CRM</span>
   )
 }
 

@@ -4,7 +4,7 @@ function Copilot() {
   return (
     <aside className="sticky top-0 hidden h-dvh w-80 shrink-0 flex-col border-l border-slate-200 bg-white xl:flex">
       <div className="flex h-16 items-center justify-between border-b border-slate-200 px-5">
-        <h2 className="font-medium"><Sparkles className="mr-2 inline text-violet-500" size={16} />Agenda Copilot</h2>
+        <h2 className="font-medium"><Sparkles className="mr-2 inline text-violet-500" size={16} />Copilot Ávila CRM</h2>
         <X size={16} />
       </div>
       <button className="border-b border-slate-100 px-5 py-4 text-left text-sm">Novo chat <ChevronRight className="float-right" size={16} /></button>
@@ -15,7 +15,7 @@ function Copilot() {
       </div>
       <div className="border-t border-slate-200 p-4">
         <select className="input mb-3"><option>Modo Ajuda</option></select>
-        <textarea className="input min-h-20 resize-none" placeholder="Pergunte ao Agenda Copilot" />
+        <textarea className="input min-h-20 resize-none" placeholder="Pergunte ao Copilot Ávila CRM" />
         <button className="mt-2 w-full rounded bg-slate-950 px-3 py-2 text-sm text-white"><Send className="mr-2 inline" size={14} />Enviar</button>
         <p className="mt-3 text-center text-xs text-slate-400">O conteúdo gerado por IA pode ser impreciso</p>
       </div>
