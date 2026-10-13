@@ -25,6 +25,10 @@ RUN npm run build
 FROM node:24-alpine
 WORKDIR /app
 ENV NODE_ENV=production
+# O commit da imagem, que o /api/health devolve em `revision`. O workflow
+# compartilhado do avilaops/infra passa GIT_SHA=github.sha em todo build.
+ARG GIT_SHA=development
+ENV APP_REVISION=$GIT_SHA
 COPY package.json package-lock.json ./
 COPY packages/cli ./packages/cli
 RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund && npm cache clean --force
