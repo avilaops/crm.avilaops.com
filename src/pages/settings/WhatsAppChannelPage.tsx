@@ -311,8 +311,8 @@ function WhatChanges() {
 function ConnectSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { user } = useSession()
   const links = supportLinks(
-    `Olá! Quero conectar o WhatsApp da minha empresa ao Agenda CRM. Sou ${user.name} (${user.email}).`,
-    'Conectar o WhatsApp ao Agenda CRM',
+    `Olá! Quero conectar o WhatsApp da minha empresa ao Ávila CRM. Sou ${user.name} (${user.email}).`,
+    'Conectar o WhatsApp ao Ávila CRM',
   )
   const hasContact = Boolean(links.whatsapp || links.email)
 

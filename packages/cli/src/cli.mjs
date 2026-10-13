@@ -40,7 +40,7 @@ export const ENV_PROFILES = {
   },
 };
 
-const HELP = `Agenda CRM CLI v${CLI_VERSION}
+const HELP = `Ávila CRM CLI v${CLI_VERSION}
 
 Uso:
   agenda [--cwd caminho] <comando> [opcoes]
@@ -248,7 +248,7 @@ function runNpmScript(projectRoot, script, passthrough = []) {
 function requireProject(cwd) {
   const projectRoot = findProjectRoot(cwd);
   if (!projectRoot) {
-    throw new Error("Execute este comando dentro de um checkout do Agenda CRM ou use --cwd.");
+    throw new Error("Execute este comando dentro de um checkout do Ávila CRM ou use --cwd.");
   }
   return projectRoot;
 }
@@ -380,7 +380,7 @@ function info(projectRoot, json) {
   if (json) console.log(JSON.stringify(result, null, 2));
   else {
     console.log(`Agenda CLI: ${result.cli}`);
-    console.log(`Agenda CRM: ${result.project}`);
+    console.log(`Ávila CRM: ${result.project}`);
     console.log(`Node.js: ${result.node}`);
     console.log(`npm: ${result.npm}`);
     console.log(`Commit: ${result.commit}`);

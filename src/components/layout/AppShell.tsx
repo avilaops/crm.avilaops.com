@@ -310,7 +310,7 @@ function MoreSheet({ open, onClose, activePage, go }: { open: boolean; onClose: 
 
 /** "Ajuda" só aparece quando há canal de suporte configurado no ambiente. */
 function HelpLink({ className }: { className: string }) {
-  const { whatsapp, email } = supportLinks('Olá! Preciso de ajuda com o Agenda CRM.')
+  const { whatsapp, email } = supportLinks('Olá! Preciso de ajuda com o Ávila CRM.')
   const href = whatsapp ?? email
   if (!href) return null
   return (

@@ -265,7 +265,7 @@ Na ordem do plano, com o ajuste da decisão 1:
 
 O texto abaixo é o plano como foi entregue em 02/10/2026.
 
-# Plano de Refatoração do Agenda CRM (crm.avilaops.com): Layout Mobile e Configuração de Canais e Integrações
+# Plano de Refatoração do Ávila CRM (crm.avilaops.com): Layout Mobile e Configuração de Canais e Integrações
 
 A refatoração deve começar por três mudanças: trocar o layout de três colunas por navegação em pilha (master-detail) abaixo de 840px, reorganizar as Configurações em "Minha conta" e "Área de trabalho", e reconstruir a conexão do WhatsApp sobre o Embedded Signup oficial da Meta com Coexistência, mostrando preços corretos em reais. Hoje o produto falha em pontos que derrubam a ativação de clientes leigos: formulários ilegíveis no celular, um QR code que confunde teste com conexão real e um preço em dólar ("a partir de $0,0002") que não corresponde à tabela da Meta.
 

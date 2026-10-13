@@ -1,4 +1,4 @@
-# Agenda CRM - CLI e npm
+# Ávila CRM - CLI e npm
 
 ## Arquitetura
 

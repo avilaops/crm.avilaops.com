@@ -232,7 +232,7 @@ export function SecuritySettings() {
             <h3 className="text-base font-semibold text-slate-900">Verificação em 2 etapas</h3>
             <ToneBadge tone="neutral">Em breve</ToneBadge>
           </div>
-          <p className="mt-1 text-sm text-slate-500">Um código no celular além da senha, pedido a cada novo acesso. Ainda não está disponível no Agenda CRM.</p>
+          <p className="mt-1 text-sm text-slate-500">Um código no celular além da senha, pedido a cada novo acesso. Ainda não está disponível no Ávila CRM.</p>
         </section>
 
         <section className="rounded-xl border border-slate-200 bg-white p-4 medium:p-6">

@@ -13,7 +13,7 @@ const { whatsapp, email } = parseSupportContact(import.meta.env.VITE_SUPORTE_WHA
 
 export type SupportLinks = { whatsapp: string | null; email: string | null }
 
-export function supportLinks(message: string, subject = 'Agenda CRM'): SupportLinks {
+export function supportLinks(message: string, subject = 'Ávila CRM'): SupportLinks {
   return {
     whatsapp: whatsapp ? `https://wa.me/${whatsapp}?text=${encodeURIComponent(message)}` : null,
     email: email ? `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(message)}` : null,

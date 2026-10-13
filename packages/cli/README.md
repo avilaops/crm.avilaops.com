@@ -1,6 +1,6 @@
-# Agenda CRM CLI
+# Ávila CRM CLI
 
-CLI oficial para padronizar desenvolvimento, diagnostico e operacao do Agenda CRM.
+CLI oficial para padronizar desenvolvimento, diagnostico e operacao do Ávila CRM.
 
 ## Uso sem instalacao
 
@@ -16,7 +16,7 @@ npm install --global @avilaops/agenda-cli
 agenda help
 ```
 
-Os comandos operacionais devem ser executados dentro de um checkout do Agenda CRM. Para outro diretorio, use `--cwd`:
+Os comandos operacionais devem ser executados dentro de um checkout do Ávila CRM. Para outro diretorio, use `--cwd`:
 
 ```sh
 agenda --cwd /opt/agenda-crm/current doctor --mode production
