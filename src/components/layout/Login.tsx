@@ -70,7 +70,7 @@ export default function Login({ onEnter }: { onEnter: (user: SessionUser) => voi
             <span className="text-lg font-semibold text-[#d9a441]">A</span>
           </div>
           <h1 className="text-xl font-semibold tracking-tight">Avila Ops</h1>
-          <p className="mt-1.5 text-sm text-[#9aa1ab]">Entrar no Agenda CRM</p>
+          <p className="mt-1.5 text-sm text-[#9aa1ab]">Entrar no Ávila CRM</p>
         </header>
 
         <div className="rounded-2xl border border-[#232830] bg-[#14171c] p-6">

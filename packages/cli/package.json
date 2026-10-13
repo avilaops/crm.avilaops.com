@@ -1,7 +1,7 @@
 {
   "name": "@avilaops/agenda-cli",
   "version": "0.1.0",
-  "description": "CLI operacional do Agenda CRM.",
+  "description": "CLI operacional do Ávila CRM.",
   "type": "module",
   "bin": {
     "agenda": "bin/agenda.js",

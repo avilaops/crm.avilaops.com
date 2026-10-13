@@ -1,4 +1,4 @@
-# Arquitetura do Agenda CRM
+# Arquitetura do Ávila CRM
 
 > Mapa do sistema como ele é hoje, levantado lendo o código e consultando o
 > banco de produção em 28/08/2026. Serve de base para o backlog.

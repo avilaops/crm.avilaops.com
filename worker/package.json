@@ -2,7 +2,7 @@
   "name": "@avilaops/agenda-meta-oauth-worker",
   "private": true,
   "version": "0.1.0",
-  "description": "Worker privado para concluir o OAuth da Meta no Agenda CRM.",
+  "description": "Worker privado para concluir o OAuth da Meta no Ávila CRM.",
   "type": "module",
   "engines": {
     "node": ">=20.0.0",

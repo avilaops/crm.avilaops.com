@@ -1,4 +1,4 @@
-# Agenda CRM - Funcionalidades pendentes para paridade com a Kommo
+# Ávila CRM - Funcionalidades pendentes para paridade com a Kommo
 
 Atualizado em: 4 de setembro de 2026
 Base auditada: commit `7016eef` (01/09/2026), conferido contra o **banco de produção** `agenda_crm` em 178.105.82.48
@@ -7,7 +7,7 @@ Escopo: frontend, backend, banco de dados, integrações, operação e seguranç
 
 ## 1. Objetivo
 
-Este documento transforma a comparação com a Kommo em um backlog executável para o Agenda CRM.
+Este documento transforma a comparação com a Kommo em um backlog executável para o Ávila CRM.
 
 Paridade funcional não significa copiar identidade visual, textos ou código da Kommo. Significa oferecer jornadas equivalentes, do início ao fim, com dados reais, persistência, permissões, auditoria, tratamento de falhas e experiência adequada para equipes comerciais.
 
