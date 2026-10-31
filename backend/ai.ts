@@ -18,6 +18,8 @@ import { query } from "./db.js";
  *    não há como responder "por que a conta subiu?".
  */
 
+import { rastrearIa, usoTokens } from "./langfuse.js";
+
 export const AI_PROVIDER = "ai";
 
 export type AiConfig = {
@@ -131,6 +133,11 @@ type Mensagem = { role: "system" | "user"; content: string };
  * pedido. `schema` vira `response_format` — o modelo não tem para onde fugir.
  */
 async function conversar(config: AiConfig, mensagens: Mensagem[], schema: Record<string, unknown>, nome: string) {
+  return rastrearIa(nome, config.model, () => conversarSemTracing(config, mensagens, schema, nome),
+    (resultado) => ({ ok: true, usage: usoTokens(resultado.inputTokens, resultado.outputTokens) }));
+}
+
+async function conversarSemTracing(config: AiConfig, mensagens: Mensagem[], schema: Record<string, unknown>, nome: string) {
   const resposta = await fetch(`${config.baseUrl.replace(/\/+$/, "")}/chat/completions`, {
     method: "POST",
     headers: {
@@ -164,8 +171,8 @@ async function conversar(config: AiConfig, mensagens: Mensagem[], schema: Record
   try {
     return {
       dados: JSON.parse(conteudo) as Record<string, unknown>,
-      inputTokens: corpo.usage?.prompt_tokens ?? 0,
-      outputTokens: corpo.usage?.completion_tokens ?? 0,
+      inputTokens: corpo.usage?.prompt_tokens,
+      outputTokens: corpo.usage?.completion_tokens,
     };
   } catch {
     throw new AiError("provedor devolveu JSON inválido");
@@ -186,7 +193,7 @@ export async function executar(
     await query(
       `insert into ai_runs (tenant_id, user_id, job, model, status, input_tokens, output_tokens, duration_ms)
        values ($1, $2, $3, $4, 'ok', $5, $6, $7)`,
-      [tenantId, userId, job, config.model, resultado.inputTokens, resultado.outputTokens, Date.now() - inicio],
+      [tenantId, userId, job, config.model, resultado.inputTokens ?? 0, resultado.outputTokens ?? 0, Date.now() - inicio],
     );
     return resultado.dados;
   } catch (erro) {
@@ -322,6 +329,12 @@ Entre 200 e 400 palavras. Nada de bullet decorativo nem título em maiúsculas.`
 }
 
 export async function testarConfig(config: AiConfig) {
+  const resultado = await rastrearIa("teste-provedor", config.model, () => testarConfigSemTracing(config),
+    (resultado) => ({ ok: resultado.ok, usage: resultado.usage }));
+  return { ok: resultado.ok, detail: resultado.detail };
+}
+
+async function testarConfigSemTracing(config: AiConfig) {
   const resposta = await fetch(`${config.baseUrl.replace(/\/+$/, "")}/chat/completions`, {
     method: "POST",
     headers: { Authorization: `Bearer ${config.apiKey}`, "Content-Type": "application/json" },
@@ -331,7 +344,11 @@ export async function testarConfig(config: AiConfig) {
       max_tokens: 5,
     }),
   });
-  const corpo = (await resposta.json().catch(() => ({}))) as { error?: { message?: string } };
+  const corpo = (await resposta.json().catch(() => ({}))) as {
+    error?: { message?: string };
+    usage?: { prompt_tokens?: number; completion_tokens?: number };
+  };
   if (!resposta.ok) return { ok: false, detail: corpo.error?.message ?? `HTTP ${resposta.status}` };
-  return { ok: true, detail: `${config.provider} respondeu com o modelo ${config.model}` };
+  return { ok: true, detail: `${config.provider} respondeu com o modelo ${config.model}`,
+    usage: usoTokens(corpo.usage?.prompt_tokens, corpo.usage?.completion_tokens) };
 }

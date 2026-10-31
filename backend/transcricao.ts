@@ -19,6 +19,8 @@
  *    Transcrição é melhoria; não pode derrubar a ingestão do WhatsApp.
  */
 
+import { rastrearIa } from "./langfuse.js";
+
 const IA_BASE = process.env.IA_BASE_URL ?? "https://ia.avilaops.com";
 const META_GRAPH_VERSION = "v23.0";
 
@@ -73,6 +75,12 @@ export async function transcrever(
 ): Promise<ResultadoTranscricao | null> {
   const chave = process.env.IA_API_KEY;
   if (!chave) return null;
+
+  return rastrearIa("transcricao", undefined, () => transcreverSemTracing(audio, contexto, chave),
+    (resultado) => ({ ok: resultado !== null }));
+}
+
+async function transcreverSemTracing(audio: Buffer, contexto: string | undefined, chave: string): Promise<ResultadoTranscricao | null> {
 
   try {
     const resposta = await fetch(`${IA_BASE}/api/v1/transcricoes?aguardar_ms=180000`, {

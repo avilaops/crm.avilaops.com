@@ -1,4 +1,5 @@
 import { googleRedirectUri } from "./google-config.js";
+import { encerrarLangfuse } from "./langfuse.js";
 import { config } from "dotenv";
 import fastifyMultipart from "@fastify/multipart";
 import fastifyStatic from "@fastify/static";
@@ -2556,11 +2557,22 @@ export async function buildApp(options: { background?: boolean } = {}) {
     });
   }
 
+  app.addHook("onClose", encerrarLangfuse);
   return app;
 }
 
 if (process.env.CRM_TEST_MODE !== "1") {
-  buildApp().then(app => app.listen({ host: "0.0.0.0", port: PORT })).catch((error) => {
+  buildApp().then(async (app) => {
+    await app.listen({ host: "0.0.0.0", port: PORT });
+    let encerrando = false;
+    const encerrar = () => {
+      if (encerrando) return;
+      encerrando = true;
+      void app.close().then(() => process.exit(0), () => process.exit(1));
+    };
+    process.once("SIGTERM", encerrar);
+    process.once("SIGINT", encerrar);
+  }).catch((error) => {
     console.error(error);
     process.exit(1);
   });
