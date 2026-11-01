@@ -14,6 +14,8 @@ import { buttonClass } from '../../lib/ui'
 import { describeWhatsAppConnection } from '../../lib/whatsappConnection'
 import type { Page } from '../../types'
 import { SettingsFrame } from './SettingsFrame'
+import { getThreadsStatus, type ThreadsStatus } from '../../lib/threads'
+import { ThreadsSheet } from './ThreadsSheet'
 
 type Kind = 'channel' | 'integration'
 type Filter = 'all' | Kind
@@ -48,20 +50,25 @@ export default function IntegrationCenterPage() {
   const [erp, setErp] = useState<ErpStatus | null>(null)
   const [google, setGoogle] = useState<{ connected: boolean; email?: string } | null>(null)
   const [erpOpen, setErpOpen] = useState(false)
+  const [threads, setThreads] = useState<ThreadsStatus | null>(null)
+  const [threadsError, setThreadsError] = useState('')
+  const [threadsOpen, setThreadsOpen] = useState(false)
   const [feedback, setFeedback] = useState<{ tone: 'success' | 'danger' | 'warning'; text: string } | null>(null)
   const [version, setVersion] = useState(0)
   const reload = () => setVersion((value) => value + 1)
 
   useEffect(() => {
     let active = true
-    Promise.allSettled([getMessageriaStatus(), listChannels(), getErpStatus(), getGoogleIntegrationStatus(), getMailAccount()]).then(
-      ([status, channels, erpStatus, googleStatus, mailAccount]) => {
+    Promise.allSettled([getMessageriaStatus(), listChannels(), getErpStatus(), getGoogleIntegrationStatus(), getMailAccount(), getThreadsStatus()]).then(
+      ([status, channels, erpStatus, googleStatus, mailAccount, threadsStatus]) => {
         if (!active) return
         const messageriaStatus = status.status === 'fulfilled' ? status.value : null
         setMessageria(messageriaStatus)
         setWhatsapp(describeWhatsAppConnection(messageriaStatus, channels.status === 'fulfilled' ? channels.value.channels : []).state)
         setErp(erpStatus.status === 'fulfilled' ? erpStatus.value : null)
         setGoogle(googleStatus.status === 'fulfilled' ? googleStatus.value : null)
+        setThreads(threadsStatus.status === 'fulfilled' ? threadsStatus.value : null)
+        setThreadsError(threadsStatus.status === 'rejected' ? (threadsStatus.reason instanceof Error ? threadsStatus.reason.message : 'Threads indisponível.') : '')
         setMail(mailAccount.status === 'fulfilled' ? (!mailAccount.value.account ? 'disconnected' : mailAccount.value.account.lastError ? 'error' : 'connected') : null)
       },
     )
@@ -99,6 +106,8 @@ export default function IntegrationCenterPage() {
   const messageriaState: ConnectionState | null = messageria === null ? null : !messageria.connected ? 'disconnected' : messageria.erro ? 'error' : 'connected'
 
   const items: Item[] = [
+    { id: 'threads', kind: 'integration', name: 'Threads', description: 'Conta da empresa e resultados de publicações públicas', icon: MessageCircle,
+      state: threadsError ? 'error' : threads === null ? null : threads.connected ? 'connected' : 'disconnected', onOpen: () => setThreadsOpen(true) },
     { id: 'whatsapp', kind: 'channel', name: 'WhatsApp', description: 'Conversas com clientes pela conexão oficial', icon: MessageCircle, state: whatsapp, onOpen: go('whatsapp-channel') },
     { id: 'email', kind: 'channel', name: 'E-mail', description: 'Caixa de entrada e envio da newsletter', icon: Mail, state: mail, onOpen: go('mail-settings') },
     {
@@ -206,6 +215,7 @@ export default function IntegrationCenterPage() {
         </ul>
       </div>
 
+      {threadsOpen && <ThreadsSheet open onClose={() => setThreadsOpen(false)} status={threads} error={threadsError} onRefresh={reload} />}
       <ErpSheet
         open={erpOpen}
         status={erp}
