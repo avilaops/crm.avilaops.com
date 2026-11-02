@@ -15,6 +15,20 @@ Software privado.
 - Agenda de contatos como item auxiliar do CRM.
 - Base visual para integração WhatsApp OAuth2 e multi-tenant.
 
+## Identidade central
+
+O `auth.avilaops.com` é a autoridade de identidade do CRM. Com `AUTH_CLIENT_ID`
+e `AUTH_CLIENT_SECRET`, o backend inicia Authorization Code + PKCE em
+`/api/auth/oidc/start`, recebe o callback em
+`https://crm.avilaops.com/api/auth/sso` e valida a identidade no
+`/oauth/userinfo`. A sessão `agenda_session` é somente sessão local de aplicação;
+ela não substitui a conta, a política ou o MFA do Auth.
+
+O post-logout registrado é
+`https://crm.avilaops.com/api/auth/logout/central/done`. O cookie SSO é
+consultado no endpoint de sessão do Auth; o CRM não valida JWT nem mantém
+segredo compartilhado do emissor.
+
 ## Inbox em tempo real
 
 O inbox recebe mensagem, tique de entrega e transcricao de audio sem recarregar

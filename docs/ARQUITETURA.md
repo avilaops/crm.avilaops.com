@@ -59,7 +59,7 @@ agenda-crm-db (Docker, postgres:16-alpine)   banco agenda_crm
 | Banco | **PostgreSQL 16** via `pg` (pool), SQL escrito à mão — sem ORM |
 | Sessão | Cookie `agenda_session`, hash SHA-256 na tabela `sessions`, 7 dias |
 | Senha | `scrypt` (`scrypt$salt$hash`) — bcrypt causava timeout com jitless |
-| SSO | Cookie `avila_sso` (JWT HS256) do `auth.avilaops.com`, opcional |
+| SSO | Cookie `avila_sso` consultado no Auth central, opcional |
 | Build | `tsc -b` + `tsc -p tsconfig.server.json` + `vite build` |
 | Deploy | Imagem no `ghcr.io`, servidor só faz `docker compose pull` |
 

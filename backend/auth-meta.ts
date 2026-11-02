@@ -241,8 +241,8 @@ export type AuthMetaRouteDeps = {
     requestId?: string | null,
   ) => Promise<void>;
   encryptSecret: (value: string | null) => string | null;
-  /** E-mail do cookie `avila_sso` do pedido, já com a assinatura conferida. */
-  emailDoSso: (request: FastifyRequest) => string | null;
+  /** E-mail do cookie `avila_sso` após consulta de autorização ao Auth. */
+  emailDoSso: (request: FastifyRequest) => Promise<string | null>;
   gravarCanais: (tenantId: string, canais: CanalDescoberto[]) => Promise<{ criados: number; atualizados: number }>;
   status: (tenantId: string) => Promise<Record<string, unknown>>;
 };
@@ -270,7 +270,7 @@ export function registerAuthMetaRoutes(app: FastifyInstance, deps: AuthMetaRoute
     }
     const { confirmar } = sincronizarSchema.parse(request.body ?? {});
 
-    const email = deps.emailDoSso(request)?.trim().toLowerCase() ?? null;
+    const email = (await deps.emailDoSso(request))?.trim().toLowerCase() ?? null;
     if (!email || email !== user.email.trim().toLowerCase()) {
       return reply.code(409).send({
         error: "Entre no CRM pela conta Avila Ops para vincular a Meta. Com e-mail e senha o CRM nao tem como saber de quem e a conexao.",
