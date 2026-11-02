@@ -2,7 +2,7 @@ import { useCallback, useMemo, useState } from 'react'
 import AppShell from '../components/layout/AppShell'
 import Copilot from '../components/layout/Copilot'
 import Login from '../components/layout/Login'
-import { logout, type SessionUser } from '../lib/auth'
+import { type SessionUser } from '../lib/auth'
 import { NavigationContext } from '../lib/navigationContext'
 import { canManageRole, SessionContext } from '../lib/session'
 import { isSettingsPage } from '../routes'
@@ -23,9 +23,7 @@ function CrmWorkspace({ route, navigate }: CrmWorkspaceProps) {
     // Espera o servidor encerrar a sessão antes de mostrar a entrada: a tela de
     // login confere a sessão ao abrir e, com o cookie ainda vivo, devolveria a
     // pessoa para dentro do CRM sem ela pedir.
-    logout()
-      .catch(() => undefined)
-      .finally(() => setUser(null))
+    window.location.assign('/api/auth/logout/central')
   }, [])
 
   const session = useMemo(

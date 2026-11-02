@@ -116,12 +116,11 @@ test('Meta webhook resolves the registered channel before writing',{skip:!enable
   assert.equal((await call('POST','/api/meta/webhook',payload)).statusCode,401);
 });
 test('Meta from auth links only through the SSO session, previews first and stays inside the tenant',{skip:!enabled},async()=>{
-  process.env.SSO_JWT_SECRET='sso-test-secret';process.env.AUTH_META_CLIENT_ID='crm';process.env.AUTH_META_CLIENT_SECRET='fixture';
-  const b64=value=>Buffer.from(JSON.stringify(value)).toString('base64url');
-  const sso=email=>{const body=`${b64({alg:'HS256',typ:'JWT'})}.${b64({iss:'auth.avilaops.com',sub:'sso-user',email,nome:'Fixture',papel:'CLIENTE',exp:Math.floor(Date.now()/1000)+600})}`;return `avila_sso=${body}.${createHmac('sha256','sso-test-secret').update(body).digest('base64url')}`};
+  process.env.SSO_BASE_URL='https://auth.test';process.env.AUTH_META_CLIENT_ID='crm';process.env.AUTH_META_CLIENT_SECRET='fixture';
+  const sso=email=>`avila_sso=token-${encodeURIComponent(email)}`;
   const post=(cookie,body)=>app.inject({method:'POST',url:'/api/meta/sincronizar',headers:{cookie},payload:body});
   const original=globalThis.fetch,requests=[];
-  globalThis.fetch=async url=>{requests.push(String(url));return Response.json({conta:{id:'c1',email:'admin@example.test'},meta:{usuarioId:'fb1',nome:'Dona A',escopos:['whatsapp_business_management'],expiraEm:'2027-01-01T00:00:00.000Z'},token:'token-do-auth',ativos:[{tipo:'whatsapp',externoId:'waba-a',nome:'Loja A',detalhe:{negocio:'Loja A',numeros:'+55 16 99234-0000',numeroIds:`num-${tenantA}`},token:null}]})};
+  globalThis.fetch=async (url, init={})=>{const destino=String(url);if(destino.includes('/api/session')){const token=String(init.headers?.Cookie??'').replace(/^avila_sso=token-/,'');const email=decodeURIComponent(token);return Response.json({autenticado:Boolean(email),permitido:Boolean(email),sessao:{sub:'sso-user',email,nome:'Fixture',papel:email==='admin@example.test'?'ADMIN':'CLIENTE'}})}requests.push(destino);return Response.json({conta:{id:'c1',email:'admin@example.test'},meta:{usuarioId:'fb1',nome:'Dona A',escopos:['whatsapp_business_management'],expiraEm:'2027-01-01T00:00:00.000Z'},token:'token-do-auth',ativos:[{tipo:'whatsapp',externoId:'waba-a',nome:'Loja A',detalhe:{negocio:'Loja A',numeros:'+55 16 99234-0000',numeroIds:`num-${tenantA}`},token:null}]})};
   try {
     // Password-only session: the CRM cannot tell whose Meta connection this is.
     assert.equal((await post(cookies.admin,{confirmar:true})).statusCode,409);
@@ -147,7 +146,7 @@ test('Meta from auth links only through the SSO session, previews first and stay
     for(const url of ['/api/meta/credentials','/api/meta/sync-channels'])assert.equal((await call('POST',url,{})).statusCode,410,url);
     const off=await ok('POST','/api/meta/disconnect',{});assert.equal(off.connected,false);assert.equal(off.origem,null);
     assert.equal((await db.query("select status from channels where tenant_id=$1 and external_id=$2",[tenantA,`num-${tenantA}`])).rows[0].status,'disconnected');
-  } finally {globalThis.fetch=original;for(const name of ['SSO_JWT_SECRET','AUTH_META_CLIENT_ID','AUTH_META_CLIENT_SECRET'])delete process.env[name]}
+  } finally {globalThis.fetch=original;for(const name of ['SSO_BASE_URL','AUTH_META_CLIENT_ID','AUTH_META_CLIENT_SECRET'])delete process.env[name]}
 });
 test('contact import previews, dedups by phone and e-mail, records the legal basis and can be undone',{skip:!enabled},async()=>{
   await db.query("insert into contacts(tenant_id,name,phone) values($1,'Existing A','+55 16 99234-0000'),($2,'Existing B','+5516977776666')",[tenantA,tenantB]);

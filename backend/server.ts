@@ -53,7 +53,6 @@ const DEFAULT_TENANT_SLUG = process.env.DEFAULT_TENANT_SLUG ?? "avila-ops";
 const PORT = Number(process.env.PORT ?? 3000);
 const SESSION_COOKIE = "agenda_session";
 const SSO_COOKIE = "avila_sso";
-const SSO_ISSUER = "auth.avilaops.com";
 const SESSION_DAYS = 7;
 const SECRET_PREFIX = "v1:";
 const RATE_LIMITS = new Map<string, { count: number; resetAt: number }>();
@@ -250,61 +249,46 @@ async function getTenantId() {
 
 type SsoSession = { sub: string; email: string; nome: string; papel: "ADMIN" | "CLIENTE" };
 
-/**
- * Verifica o JWT de sessao emitido por auth.avilaops.com.
- *
- * Feito com node:crypto em vez de uma lib de JWT porque o unico algoritmo que
- * precisamos aceitar e HS256, e o projeto ja usa createHmac/timingSafeEqual —
- * nao vale uma dependencia nova para isso.
- */
-function verifySsoToken(token: string): SsoSession | null {
-  const secret = process.env.SSO_JWT_SECRET;
-  if (!secret) return null;
-
-  const parts = token.split(".");
-  if (parts.length !== 3) return null;
-  const [rawHeader, rawPayload, rawSignature] = parts;
-
-  let header: { alg?: string };
+async function consultarSessaoSso(token: string | undefined): Promise<SsoSession | null> {
+  if (!token) return null;
+  const base = (process.env.SSO_BASE_URL ?? "https://auth.avilaops.com").replace(/\/$/, "");
   try {
-    header = JSON.parse(Buffer.from(rawHeader, "base64url").toString("utf8"));
-  } catch {
-    return null;
-  }
-  // Obrigatorio: sem fixar o algoritmo, um token forjado com alg "none" (ou com
-  // uma cifra assimetrica cuja chave publica e conhecida) passaria pela conferencia.
-  if (header.alg !== "HS256") return null;
-
-  const esperado = createHmac("sha256", secret).update(`${rawHeader}.${rawPayload}`).digest();
-  const recebido = Buffer.from(rawSignature, "base64url");
-  // timingSafeEqual lanca quando os tamanhos diferem; conferir antes.
-  if (esperado.length !== recebido.length) return null;
-  if (!timingSafeEqual(esperado, recebido)) return null;
-
-  let payload: Record<string, unknown>;
-  try {
-    payload = JSON.parse(Buffer.from(rawPayload, "base64url").toString("utf8"));
-  } catch {
-    return null;
-  }
-
-  if (payload.iss !== SSO_ISSUER) return null;
-  if (typeof payload.exp !== "number" || payload.exp * 1000 <= Date.now()) return null;
-  if (payload.papel !== "ADMIN" && payload.papel !== "CLIENTE") return null;
-  if (typeof payload.email !== "string" || typeof payload.sub !== "string") return null;
-
-  return {
-    sub: payload.sub,
-    email: payload.email,
-    nome: typeof payload.nome === "string" ? payload.nome : payload.email,
-    papel: payload.papel,
-  };
+    const resposta = await fetch(`${base}/api/session?app=crm`, {
+      headers: { Cookie: `${SSO_COOKIE}=${token}`, accept: "application/json" },
+      redirect: "error",
+      cache: "no-store",
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!resposta.ok) return null;
+    const corpo = await resposta.json().catch(() => null) as { autenticado?: boolean; permitido?: boolean; sessao?: Partial<SsoSession> } | null;
+    const sessao = corpo?.sessao;
+    if (!corpo?.autenticado || !corpo.permitido || typeof sessao?.sub !== "string" || typeof sessao.email !== "string") return null;
+    return { sub: sessao.sub, email: sessao.email.trim().toLowerCase(), nome: typeof sessao.nome === "string" ? sessao.nome : sessao.email, papel: sessao.papel === "ADMIN" ? "ADMIN" : "CLIENTE" };
+  } catch { return null; }
 }
 
 function urlLoginSso() {
   const base = process.env.SSO_BASE_URL ?? "https://auth.avilaops.com";
   const returnTo = `${process.env.CRM_BASE_URL ?? "https://crm.avilaops.com"}/api/auth/sso`;
+  if (process.env.AUTH_CLIENT_ID && process.env.AUTH_CLIENT_SECRET) {
+    return `${process.env.CRM_BASE_URL ?? "https://crm.avilaops.com"}/api/auth/oidc/start`;
+  }
   return `${base}/login?app=crm&returnTo=${encodeURIComponent(returnTo)}`;
+}
+
+function oidcCookie(value: string, maxAge = 600) {
+  const secure = process.env.NODE_ENV === "production" ? "; Secure" : "";
+  return `crm_oidc_flow=${encodeURIComponent(value)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${secure}`;
+}
+
+async function identidadeOidc(accessToken: string) {
+  const base = (process.env.SSO_BASE_URL ?? "https://auth.avilaops.com").replace(/\/$/, "");
+  const resposta = await fetch(`${base}/oauth/userinfo`, { headers: { authorization: `Bearer ${accessToken}`, accept: "application/json" }, redirect: "error", signal: AbortSignal.timeout(5000) });
+  if (!resposta.ok) return null;
+  const dados = await resposta.json().catch(() => null) as { sub?: unknown; email?: unknown; email_verified?: unknown; name?: unknown; papel?: unknown } | null;
+  if (!dados || typeof dados.sub !== "string" || typeof dados.email !== "string" || dados.email.length > 320 || dados.email_verified === false) return null;
+  const papel: "ADMIN" | "CLIENTE" = dados.papel === "ADMIN" ? "ADMIN" : "CLIENTE";
+  return { sub: dados.sub, email: dados.email.trim().toLowerCase(), nome: typeof dados.name === "string" ? dados.name : dados.email, papel };
 }
 
 function cabecalhoCookieSessao(token: string) {
@@ -962,7 +946,23 @@ export async function buildApp(options: { background?: boolean } = {}) {
   });
 
   app.get("/api/auth/sso/enabled", async () => {
-    return { enabled: Boolean(process.env.SSO_JWT_SECRET), url: urlLoginSso() };
+    return { enabled: Boolean(process.env.SSO_BASE_URL?.trim()), url: urlLoginSso() };
+  });
+
+  app.get("/api/auth/oidc/start", async (request, reply) => {
+    const clientId = process.env.AUTH_CLIENT_ID?.trim();
+    const secret = process.env.AUTH_CLIENT_SECRET?.trim();
+    if (!clientId || !secret) return reply.redirect(urlLoginSso());
+    const state = randomBytes(32).toString("base64url");
+    const nonce = randomBytes(32).toString("base64url");
+    const verifier = randomBytes(32).toString("base64url");
+    const base = (process.env.SSO_BASE_URL ?? "https://auth.avilaops.com").replace(/\/$/, "");
+    const callback = `${process.env.CRM_BASE_URL ?? "https://crm.avilaops.com"}/api/auth/sso`;
+    const destino = new URL(`${base}/oauth/authorize`);
+    destino.search = new URLSearchParams({ response_type: "code", client_id: clientId, redirect_uri: callback, scope: "openid profile email", state, nonce, code_challenge: createHash("sha256").update(verifier).digest("base64url"), code_challenge_method: "S256" }).toString();
+    const tenantSlug = z.object({ tenantSlug: z.string().max(120).optional() }).parse(request.query).tenantSlug;
+    reply.header("Set-Cookie", oidcCookie(JSON.stringify({ state, nonce, verifier, tenantSlug, exp: Date.now() + 600_000 })));
+    return reply.redirect(destino.toString());
   });
 
   /**
@@ -974,13 +974,36 @@ export async function buildApp(options: { background?: boolean } = {}) {
    * igual ao login por senha.
    */
   app.get("/api/auth/sso", async (request, reply) => {
-    const token = parseCookies(request.headers.cookie).get(SSO_COOKIE);
-    const sessao = token ? verifySsoToken(token) : null;
+    const params = request.query as { code?: string; state?: string; error?: string; tenantSlug?: string };
+    let sessao = null as SsoSession | null;
+    let oidcTenantSlug: string | undefined;
+    if (params.code || params.error) {
+      const fluxoTexto = parseCookies(request.headers.cookie).get("crm_oidc_flow");
+      reply.header("Set-Cookie", oidcCookie("", 0));
+      let fluxo: { state: string; nonce: string; verifier: string; tenantSlug?: string; exp: number } | null = null;
+      try { fluxo = fluxoTexto ? JSON.parse(fluxoTexto) : null; } catch { fluxo = null; }
+      oidcTenantSlug = fluxo?.tenantSlug;
+      const clientId = process.env.AUTH_CLIENT_ID?.trim();
+      const secret = process.env.AUTH_CLIENT_SECRET?.trim();
+      if (!fluxo || fluxo.exp <= Date.now() || params.state !== fluxo.state || params.error || !params.code || !clientId || !secret) return reply.code(400).send({ error: "OIDC invalido." });
+      const base = (process.env.SSO_BASE_URL ?? "https://auth.avilaops.com").replace(/\/$/, "");
+      const callback = `${process.env.CRM_BASE_URL ?? "https://crm.avilaops.com"}/api/auth/sso`;
+      const tokenResposta = await fetch(`${base}/oauth/token`, { method: "POST", redirect: "error", signal: AbortSignal.timeout(8000), headers: { "content-type": "application/x-www-form-urlencoded", authorization: `Basic ${Buffer.from(`${encodeURIComponent(clientId)}:${encodeURIComponent(secret)}`).toString("base64")}` }, body: new URLSearchParams({ grant_type: "authorization_code", code: params.code, redirect_uri: callback, code_verifier: fluxo.verifier }) });
+      const tokens = await tokenResposta.json().catch(() => null) as { access_token?: string; id_token?: string } | null;
+      if (!tokenResposta.ok || !tokens?.access_token || !tokens.id_token) return reply.code(401).send({ error: "OIDC recusado." });
+      try {
+        const payload = JSON.parse(Buffer.from(tokens.id_token.split(".")[1] ?? "", "base64url").toString("utf8")) as { nonce?: unknown };
+        if (payload.nonce !== fluxo.nonce) return reply.code(401).send({ error: "OIDC recusado." });
+      } catch { return reply.code(401).send({ error: "OIDC recusado." }); }
+      sessao = await identidadeOidc(tokens.access_token);
+    } else {
+      sessao = await consultarSessaoSso(parseCookies(request.headers.cookie).get(SSO_COOKIE));
+    }
 
     // Sem cookie valido: manda para o auth server obter um.
     if (!sessao) return reply.redirect(urlLoginSso());
 
-    const requested = z.object({tenantSlug:z.string().max(120).optional()}).parse(request.query).tenantSlug;
+    const requested = oidcTenantSlug ?? z.object({tenantSlug:z.string().max(120).optional()}).parse(request.query).tenantSlug;
     const memberships = await query<AuthUser & {active:boolean}>("select u.id,u.tenant_id,u.name,u.email,u.role,u.active from users u join tenants t on t.id=u.tenant_id where lower(u.email)=lower($1) and ($2::text is null or t.slug=$2)",[sessao.email,requested??null]);
     if (memberships.rows.length > 1) return reply.code(409).send({error:"Informe o codigo da empresa para entrar."});
     if (requested && !memberships.rowCount) return reply.code(403).send({error:"Sem acesso a esta empresa."});
@@ -1073,6 +1096,24 @@ export async function buildApp(options: { background?: boolean } = {}) {
     }
     reply.header("Set-Cookie", `${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${process.env.NODE_ENV === "production" ? "; Secure" : ""}`);
     return { authenticated: false };
+  });
+
+  app.get("/api/auth/logout/central", async (request, reply) => {
+    const token = parseCookies(request.headers.cookie).get(SESSION_COOKIE);
+    if (token) await query("delete from sessions where token_hash = $1", [hashToken(token)]);
+    reply.header("Set-Cookie", `${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${process.env.NODE_ENV === "production" ? "; Secure" : ""}`);
+    const base = (process.env.SSO_BASE_URL ?? "https://auth.avilaops.com").replace(/\/$/, "");
+    const clientId = process.env.AUTH_CLIENT_ID?.trim();
+    if (!clientId) return reply.redirect("/");
+    const retorno = `${process.env.CRM_BASE_URL ?? "https://crm.avilaops.com"}/api/auth/logout/central/done`;
+    const destino = new URL(`${base}/api/auth/logout`);
+    destino.search = new URLSearchParams({ client_id: clientId, post_logout_redirect_uri: retorno }).toString();
+    return reply.redirect(destino.toString());
+  });
+
+  app.get("/api/auth/logout/central/done", async (_request, reply) => {
+    reply.header("Set-Cookie", `${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${process.env.NODE_ENV === "production" ? "; Secure" : ""}`);
+    return reply.redirect("/");
   });
 
   app.get("/api/bootstrap", async (request, reply) => {
@@ -2507,9 +2548,9 @@ export async function buildApp(options: { background?: boolean } = {}) {
     checkRateLimit,
     recordEvent,
     encryptSecret,
-    emailDoSso: (request) => {
+    emailDoSso: async (request) => {
       const token = parseCookies(request.headers.cookie).get(SSO_COOKIE);
-      return (token ? verifySsoToken(token) : null)?.email ?? null;
+      return (await consultarSessaoSso(token))?.email ?? null;
     },
     gravarCanais: gravarCanaisDoAuth,
     status: async (tenantId) => metaStatus(await readMetaIntegration(tenantId)),
