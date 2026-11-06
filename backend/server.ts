@@ -243,6 +243,12 @@ function urlLoginSso() {
   return `${base}/login?app=crm&returnTo=${encodeURIComponent(returnTo)}`;
 }
 
+function urlSignupSso() {
+  const base = (process.env.SSO_BASE_URL ?? "https://auth.avilaops.com").replace(/\/$/, "");
+  const returnTo = `${process.env.CRM_BASE_URL ?? "https://crm.avilaops.com"}/api/auth/sso`;
+  return `${base}/criar?app=crm&returnTo=${encodeURIComponent(returnTo)}`;
+}
+
 function oidcCookie(value: string, maxAge = 600) {
   const secure = process.env.NODE_ENV === "production" ? "; Secure" : "";
   return `crm_oidc_flow=${encodeURIComponent(value)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${secure}`;
@@ -903,7 +909,7 @@ export async function buildApp(options: { background?: boolean } = {}) {
   });
 
   app.get("/api/auth/sso/enabled", async () => {
-    return { enabled: true, url: urlLoginSso() };
+    return { enabled: true, url: urlLoginSso(), signupUrl: urlSignupSso() };
   });
 
   app.get("/api/auth/oidc/start", async (request, reply) => {

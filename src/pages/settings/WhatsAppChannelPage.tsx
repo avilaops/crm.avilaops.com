@@ -98,7 +98,7 @@ export function WhatsAppChannelPage() {
         </div>
       </div>
 
-      <ConnectSheet open={connectOpen} onClose={() => setConnectOpen(false)} />
+      <ConnectSheet open={connectOpen} onClose={() => setConnectOpen(false)} meta={meta} />
     </SettingsFrame>
   )
 }
@@ -308,7 +308,7 @@ function WhatChanges() {
   )
 }
 
-function ConnectSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
+function ConnectSheet({ open, onClose, meta }: { open: boolean; onClose: () => void; meta: MetaStatus | null }) {
   const { user } = useSession()
   const links = supportLinks(
     `Olá! Quero conectar o WhatsApp da minha empresa ao Ávila CRM. Sou ${user.name} (${user.email}).`,
@@ -357,6 +357,7 @@ function ConnectSheet({ open, onClose }: { open: boolean; onClose: () => void })
           <ShieldCheck size={18} className="mt-0.5 shrink-0 text-slate-500" aria-hidden="true" />
           A conexão é a oficial da Meta. O CRM nunca pede para escanear QR Code nem guarda a senha do seu WhatsApp.
         </p>
+        {meta?.paginaDaMeta && <a className={`${buttonClass.primary} inline-flex w-full justify-center`} href={meta.paginaDaMeta}>Abrir conexão OAuth oficial da Meta</a>}
         {!hasContact && <Notice tone="info">Peça a quem administra a sua conta Ávila Ops para agendar a conexão.</Notice>}
       </div>
     </Sheet>

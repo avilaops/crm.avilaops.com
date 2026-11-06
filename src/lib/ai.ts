@@ -1,7 +1,7 @@
 import { api } from './crm'
 
 export type AiConfig = {
-  provider: 'openai' | 'deepseek' | 'groq' | string
+  provider: 'openai' | 'anthropic' | 'qwen' | 'deepseek' | 'groq' | string
   baseUrl: string
   model: string
   hasKey: boolean

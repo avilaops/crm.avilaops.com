@@ -29,9 +29,10 @@ export function getSession() {
   return fetchJson<SessionResponse>('/api/auth/session')
 }
 
-type SsoStatus = {
+export type SsoStatus = {
   enabled: boolean
   url: string
+  signupUrl: string
 }
 
 /**

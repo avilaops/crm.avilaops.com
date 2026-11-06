@@ -1,6 +1,7 @@
 import { ArrowRight, Bot, Inbox, Sparkles, UsersRound } from 'lucide-react'
 import { useEffect, useState, type ReactNode } from 'react'
 import { getSession, getSsoStatus, type SessionUser } from '../../lib/auth'
+import AvilaMark from './AvilaMark'
 
 type LandingProps = { onEnter: (user: SessionUser) => void }
 
@@ -22,16 +23,13 @@ function Feature({ icon: Icon, title, text }: (typeof features)[number]) {
   )
 }
 
-function Mark() {
-  return <span className="grid size-10 place-items-center rounded-xl bg-slate-950 text-sm font-bold text-amber-300 shadow-lg shadow-slate-950/15">A</span>
-}
-
 function StatusMessage({ children }: { children: ReactNode }) {
   return <p className="mt-4 text-center text-sm text-slate-500" role="status">{children}</p>
 }
 
 export default function Landing({ onEnter }: LandingProps) {
   const [authUrl, setAuthUrl] = useState<string | null>(null)
+  const [signupUrl, setSignupUrl] = useState<string | null>(null)
   const [checking, setChecking] = useState(true)
 
   useEffect(() => {
@@ -43,8 +41,16 @@ export default function Landing({ onEnter }: LandingProps) {
       .catch(() => undefined)
       .finally(() => active && setChecking(false))
     getSsoStatus()
-      .then((status) => active && setAuthUrl(status.enabled ? status.url : null))
-      .catch(() => active && setAuthUrl(null))
+      .then((status) => {
+        if (!active) return
+        setAuthUrl(status.enabled ? status.url : null)
+        setSignupUrl(status.enabled ? status.signupUrl : null)
+      })
+      .catch(() => {
+        if (!active) return
+        setAuthUrl(null)
+        setSignupUrl(null)
+      })
     return () => {
       active = false
     }
@@ -58,10 +64,10 @@ export default function Landing({ onEnter }: LandingProps) {
 
         <nav className="mx-auto flex max-w-6xl items-center justify-between px-5 py-5 sm:px-8 sm:py-7">
           <a href="/" className="flex items-center gap-3" aria-label="Ávila CRM, início">
-            <Mark />
-            <span className="text-sm font-bold tracking-[0.16em] text-slate-900">ÁVILA CRM</span>
+            <AvilaMark />
+            <span><span className="block text-sm font-bold tracking-[0.16em] text-slate-900">Avila CRM</span><span className="block text-[10px] font-medium tracking-[0.12em] text-slate-500">Ávila Ops</span></span>
           </a>
-          {authUrl && <a className="text-sm font-semibold text-slate-700 hover:text-slate-950" href={authUrl}>Entrar</a>}
+          {authUrl && <div className="flex items-center gap-4"><a className="text-sm font-semibold text-slate-700 hover:text-slate-950" href={authUrl}>Entrar</a>{signupUrl && <a className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-800 hover:border-slate-500" href={signupUrl}>Criar minha conta</a>}</div>}
         </nav>
 
         <section className="mx-auto grid max-w-6xl gap-12 px-5 pb-16 pt-12 sm:px-8 sm:pb-24 sm:pt-20 lg:grid-cols-[1.1fr_.9fr] lg:items-center lg:gap-20">
@@ -79,9 +85,9 @@ export default function Landing({ onEnter }: LandingProps) {
               {checking ? (
                 <StatusMessage>Conectando ao acesso Ávila Ops…</StatusMessage>
               ) : authUrl ? (
-                <a className="inline-flex min-h-12 items-center justify-center gap-2 rounded-xl bg-slate-950 px-5 py-3 text-sm font-bold text-white shadow-xl shadow-slate-950/20 transition-transform hover:-translate-y-0.5" href={authUrl}>
+                <div className="flex flex-wrap items-center gap-3"><a className="inline-flex min-h-12 items-center justify-center gap-2 rounded-xl bg-slate-950 px-5 py-3 text-sm font-bold text-white shadow-xl shadow-slate-950/20 transition-transform hover:-translate-y-0.5" href={authUrl}>
                   Acessar o CRM <ArrowRight size={18} aria-hidden="true" />
-                </a>
+                </a>{signupUrl && <a className="inline-flex min-h-12 items-center justify-center rounded-xl border border-slate-300 bg-white/70 px-5 py-3 text-sm font-bold text-slate-800 hover:border-slate-500" href={signupUrl}>Criar minha conta</a>}</div>
               ) : (
                 <StatusMessage>O acesso Ávila Ops está indisponível no momento.</StatusMessage>
               )}

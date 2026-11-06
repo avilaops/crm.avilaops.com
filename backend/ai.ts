@@ -4,8 +4,9 @@ import { query } from "./db.js";
  * Agente de IA do CRM.
  *
  * Fala o dialeto da API da OpenAI, que hoje é o denominador comum: OpenAI,
- * DeepSeek e Groq aceitam o mesmo formato de `chat/completions`. Trocar de
- * provedor é trocar `base_url` e chave na tela, sem tocar em código.
+ * DeepSeek, Groq e Qwen via Ollama aceitam o mesmo formato de `chat/completions`.
+ * Claude usa o endpoint Messages, adaptado aqui para manter o restante do CRM
+ * independente do provedor.
  *
  * Três decisões que valem explicar:
  *
@@ -33,6 +34,8 @@ export type AiConfigView = Omit<AiConfig, "apiKey"> & { hasKey: boolean; connect
 
 const PADROES: Record<string, { baseUrl: string; model: string }> = {
   openai: { baseUrl: "https://api.openai.com/v1", model: "gpt-4.1-mini" },
+  anthropic: { baseUrl: "https://api.anthropic.com/v1", model: "claude-3-5-haiku-latest" },
+  qwen: { baseUrl: process.env.QWEN_BASE_URL ?? "http://127.0.0.1:11434/v1", model: "qwen3:1.7b" },
   deepseek: { baseUrl: "https://api.deepseek.com/v1", model: "deepseek-chat" },
   groq: { baseUrl: "https://api.groq.com/openai/v1", model: "llama-3.3-70b-versatile" },
 };
@@ -58,7 +61,7 @@ export async function loadAiConfig(
     [tenantId, AI_PROVIDER],
   );
   const linha = resultado.rows[0];
-  if (!linha?.app_secret) return null;
+  if (!linha || (!linha.app_secret && texto(linha.metadata ?? {}, "provider", "openai") !== "qwen")) return null;
 
   const metadata = linha.metadata ?? {};
   const provedor = texto(metadata, "provider", "openai");
@@ -138,6 +141,7 @@ async function conversar(config: AiConfig, mensagens: Mensagem[], schema: Record
 }
 
 async function conversarSemTracing(config: AiConfig, mensagens: Mensagem[], schema: Record<string, unknown>, nome: string) {
+  if (config.provider === "anthropic") return conversarAnthropic(config, mensagens, schema, nome);
   const resposta = await fetch(`${config.baseUrl.replace(/\/+$/, "")}/chat/completions`, {
     method: "POST",
     headers: {
@@ -174,6 +178,30 @@ async function conversarSemTracing(config: AiConfig, mensagens: Mensagem[], sche
       inputTokens: corpo.usage?.prompt_tokens,
       outputTokens: corpo.usage?.completion_tokens,
     };
+  } catch {
+    throw new AiError("provedor devolveu JSON inválido");
+  }
+}
+
+async function conversarAnthropic(config: AiConfig, mensagens: Mensagem[], schema: Record<string, unknown>, nome: string) {
+  const sistema = mensagens.filter((item) => item.role === "system").map((item) => item.content).join("\n\n");
+  const usuarios = mensagens.filter((item) => item.role === "user").map((item) => ({ role: "user", content: item.content }));
+  const resposta = await fetch(`${config.baseUrl.replace(/\/+$/, "")}/messages`, {
+    method: "POST",
+    headers: { "x-api-key": config.apiKey, "anthropic-version": "2023-06-01", "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: config.model,
+      max_tokens: 2048,
+      system: `${sistema}\n\nRetorne somente um JSON válido, sem markdown, seguindo este esquema: ${JSON.stringify(schema)}. Nome do formato: ${nome}.`,
+      messages: usuarios,
+    }),
+  });
+  const corpo = (await resposta.json().catch(() => ({}))) as { content?: { text?: string }[]; usage?: { input_tokens?: number; output_tokens?: number }; error?: { message?: string } };
+  if (!resposta.ok) throw new AiError(corpo.error?.message ?? `provedor respondeu HTTP ${resposta.status}`);
+  const conteudo = corpo.content?.find((item) => item.text)?.text?.trim();
+  if (!conteudo) throw new AiError("provedor devolveu resposta vazia");
+  try {
+    return { dados: JSON.parse(conteudo.replace(/^```json\s*|\s*```$/g, "")) as Record<string, unknown>, inputTokens: corpo.usage?.input_tokens, outputTokens: corpo.usage?.output_tokens };
   } catch {
     throw new AiError("provedor devolveu JSON inválido");
   }
@@ -335,9 +363,19 @@ export async function testarConfig(config: AiConfig) {
 }
 
 async function testarConfigSemTracing(config: AiConfig) {
+  if (config.provider === "anthropic") {
+    const resposta = await fetch(`${config.baseUrl.replace(/\/+$/, "")}/messages`, {
+      method: "POST",
+      headers: { "x-api-key": config.apiKey, "anthropic-version": "2023-06-01", "Content-Type": "application/json" },
+      body: JSON.stringify({ model: config.model, max_tokens: 5, messages: [{ role: "user", content: "Responda apenas: ok" }] }),
+    });
+    const corpo = (await resposta.json().catch(() => ({}))) as { content?: { text?: string }[]; error?: { message?: string }; usage?: { input_tokens?: number; output_tokens?: number } };
+    if (!resposta.ok) return { ok: false, detail: corpo.error?.message ?? `HTTP ${resposta.status}` };
+    return { ok: true, detail: `${config.provider} respondeu com o modelo ${config.model}`, usage: usoTokens(corpo.usage?.input_tokens, corpo.usage?.output_tokens) };
+  }
   const resposta = await fetch(`${config.baseUrl.replace(/\/+$/, "")}/chat/completions`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${config.apiKey}`, "Content-Type": "application/json" },
+    headers: { ...(config.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : {}), "Content-Type": "application/json" },
     body: JSON.stringify({
       model: config.model,
       messages: [{ role: "user", content: "Responda apenas: ok" }],

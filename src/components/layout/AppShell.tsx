@@ -7,6 +7,7 @@ import { initials, roleLabel, useSession } from '../../lib/session'
 import { supportLinks } from '../../lib/support'
 import type { Page } from '../../types'
 import { Sheet } from '../ui/Sheet'
+import AvilaMark from './AvilaMark'
 
 /**
  * Casca do CRM: a navegação muda de forma conforme a largura.
@@ -106,11 +107,9 @@ export default function AppShell({ children, aside }: { children: ReactNode; asi
 
 function Brand({ compact = false }: { compact?: boolean }) {
   return compact ? (
-    <span className="grid size-10 place-items-center rounded-xl bg-slate-900 text-base font-black italic text-white" aria-label="Ávila CRM">
-      Á
-    </span>
+    <span className="grid size-10 place-items-center rounded-xl bg-slate-950" aria-label="Ávila CRM"><AvilaMark className="size-8" /></span>
   ) : (
-    <span className="text-2xl font-black italic text-slate-900">Ávila CRM</span>
+    <span className="flex items-center gap-2"><AvilaMark className="size-9" /><span><span className="block text-lg font-black tracking-tight text-slate-900">Avila CRM</span><span className="block text-[10px] font-medium tracking-[0.12em] text-slate-500">Ávila Ops</span></span></span>
   )
 }
 

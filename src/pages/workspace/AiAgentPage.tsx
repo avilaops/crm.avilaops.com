@@ -19,6 +19,8 @@ import Topbar from '../../components/layout/Topbar'
 
 const PROVEDORES = [
   ['openai', 'OpenAI'],
+  ['anthropic', 'Claude (Anthropic)'],
+  ['qwen', 'Qwen local (Ávila Ops)'],
   ['deepseek', 'DeepSeek'],
   ['groq', 'Groq'],
 ] as const
@@ -154,7 +156,7 @@ function AiAgentPage() {
 
   return (
     <div>
-      <Topbar title="Agente de IA" tab={config?.hasKey ? `${config.model}` : 'não configurado'} />
+      <Topbar title="Agente de IA" tab={config && (config.hasKey || config.provider === 'qwen') ? `${config.model}` : 'não configurado'} />
       <div className="space-y-4 p-5">
         {erro && <p className="rounded border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{erro}</p>}
         {recado && <p className="rounded border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{recado}</p>}
@@ -199,7 +201,7 @@ function AiAgentPage() {
                 autoComplete="new-password"
                 value={apiKey}
                 onChange={(event) => setApiKey(event.target.value)}
-                placeholder="sk-…"
+                placeholder={provider === 'qwen' ? 'Opcional para Qwen local' : 'sk-…'}
               />
             </label>
           </div>
@@ -215,7 +217,7 @@ function AiAgentPage() {
             <button
               className="rounded border border-slate-200 px-4 py-2 text-sm disabled:opacity-50"
               onClick={() => void testar()}
-              disabled={busy === 'test' || !config?.hasKey}
+              disabled={busy === 'test' || !config || (!config.hasKey && config.provider !== 'qwen')}
             >
               {busy === 'test' ? 'Testando…' : 'Testar conexão'}
             </button>

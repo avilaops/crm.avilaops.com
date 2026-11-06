@@ -91,7 +91,7 @@ export function registerAiRoutes(app: FastifyInstance, deps: Dependencies) {
     if (!user) return;
     const input = z
       .object({
-        provider: z.enum(["openai", "deepseek", "groq"]).default("openai"),
+        provider: z.enum(["openai", "anthropic", "qwen", "deepseek", "groq"]).default("openai"),
         baseUrl: z.string().trim().max(200).optional(),
         model: z.string().trim().max(80).optional(),
         apiKey: z.string().trim().max(300).optional(),
