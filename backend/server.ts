@@ -21,6 +21,7 @@ import { enviar as enviarPelaMessageria, getConnection as conexaoMessageria, Mes
 import { convidarPelaContaAvila } from "./auth-convite.js";
 import { paginaDaMeta, precisaRenovar, registerAuthMetaRoutes, renovarConexaoMeta, type CanalDescoberto } from "./auth-meta.js";
 import { registerThreadsRoutes } from "./routes-threads.js";
+import { registerMcpRoutes } from "./routes-mcp.js";
 import { registerMailRoutes } from "./routes-mail.js";
 import { registerImportRoutes } from "./routes-import.js";
 import { startAutomation } from "./automation.js";
@@ -2523,6 +2524,7 @@ export async function buildApp(options: { background?: boolean } = {}) {
   });
 
   registerCrmCoreRoutes(app, { requireAuth });
+  registerMcpRoutes(app, { requireAuth });
   registerThreadsRoutes(app, { requireAuth });
   registerRealtimeRoutes(app, { requireAuth });
   registerWhatsAppMediaRoutes(app, {

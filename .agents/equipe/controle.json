@@ -2,7 +2,27 @@
   "schemaVersion": 1,
   "application": "avila-crm-avilaops-com",
   "members": [],
-  "tasks": [],
-  "decisions": [],
+  "tasks": [
+    {
+      "id": "MCP-001",
+      "title": "Disponibilizar MCP autenticado do CRM",
+      "status": "em-andamento",
+      "responsavel": null,
+      "objetivo": "Conectar ferramentas de IA ao CRM em /mcp sem compartilhar sessão ou permitir acesso entre empresas.",
+      "criteriosAceite": [
+        "Negociação MCP e descoberta verificadas",
+        "Autenticação obrigatória e consultas limitadas ao tenant da credencial",
+        "Consulta de contatos e conversas com paginação",
+        "Publicação no endpoint solicitado e conector privado"
+      ]
+    }
+  ],
+  "decisions": [
+    {
+      "id": "MCP-D01",
+      "decision": "MCP de serviço somente leitura, com Bearer vinculado a uma empresa; sem SQL arbitrário ou envio de mensagens.",
+      "evidence": "backend/routes-mcp.ts"
+    }
+  ],
   "integrations": []
 }

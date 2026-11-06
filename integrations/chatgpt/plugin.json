@@ -1,0 +1,22 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "avila-crm",
+  "version": "1.0.0",
+  "description": "Consulta autenticada de contatos e conversas no CRM da Ávila Ops.",
+  "author": {
+    "name": "Ávila Ops Tecnologia"
+  },
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "Ávila CRM",
+        "shortDescription": "Contatos e conversas do CRM",
+        "longDescription": "Consulte contatos, conversas e mensagens do CRM com referências aos registros e acesso limitado à empresa da credencial. Integração somente leitura.",
+        "developerName": "Ávila Ops Tecnologia",
+        "category": "Productivity",
+        "capabilities": [],
+        "defaultPrompt": "Consulte meus contatos e conversas no CRM."
+      }
+    }
+  }
+}
