@@ -185,7 +185,7 @@ export function listUsers() {
   return api<{ users: CrmUser[] }>('/api/users')
 }
 
-export function createUser(input: { name: string; email: string; role: string; password?: string }) {
+export function createUser(input: { name: string; email: string; role: string }) {
   return api<{ user: CrmUser }>('/api/users', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -198,7 +198,7 @@ export function inviteUser(userId: string) {
   return api<{ user: CrmUser }>(`/api/users/${userId}/invite`, { method: 'POST' })
 }
 
-export function updateUser(userId: string, input: Partial<{ name: string; email: string; role: string; active: boolean; password: string }>) {
+export function updateUser(userId: string, input: Partial<{ name: string; email: string; role: string; active: boolean }>) {
   return api<{ user: CrmUser }>(`/api/users/${userId}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },

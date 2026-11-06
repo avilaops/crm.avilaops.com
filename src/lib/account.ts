@@ -12,15 +12,11 @@ export type AccountSession = {
 }
 
 export function getMe() {
-  return api<{ user: SessionUser; hasPassword: boolean }>('/api/me')
+  return api<{ user: SessionUser }>('/api/me')
 }
 
 export function updateMe(input: { name: string }) {
   return api<{ user: SessionUser }>('/api/me', { method: 'PATCH', headers: json, body: JSON.stringify(input) })
-}
-
-export function changePassword(input: { currentPassword: string; newPassword: string }) {
-  return api<{ ok: boolean; otherSessionsClosed: number }>('/api/me/password', { method: 'POST', headers: json, body: JSON.stringify(input) })
 }
 
 export function listMySessions() {

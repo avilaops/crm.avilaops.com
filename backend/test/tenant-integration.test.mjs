@@ -42,8 +42,8 @@ before(async()=>{
 });
 after(async()=>{if(!enabled)return;if(app)await app.close();if(realtime)await realtime.stopRealtime();if(db)await db.closeDb()});
 
-test('login resolves explicit tenant and never trusts tenant headers',{skip:!enabled},async()=>{
-  const r=await ok('POST','/api/auth/login',{email:'other@example.test',password:'test-password',tenantSlug:`fixture-b-${tenantB}`});assert.equal(r.user.tenant_id,tenantB);
+test('local password login is unavailable and tenant sessions stay isolated',{skip:!enabled},async()=>{
+  assert.equal((await call('POST','/api/auth/login',{email:'other@example.test',password:'test-password',tenantSlug:`fixture-b-${tenantB}`})).statusCode,404);
   const response=await app.inject({url:'/api/contacts',headers:{cookie:cookies.admin,'x-tenant-id':tenantB}});assert.ok(response.json().contacts.every(c=>c.name!=='Bob'));
 });
 test('anonymous and disabled sessions cannot use the API',{skip:!enabled},async()=>{

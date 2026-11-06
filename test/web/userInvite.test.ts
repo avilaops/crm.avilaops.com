@@ -30,7 +30,7 @@ test('aviso depois de adicionar: convite que não saiu é atenção, e a pessoa 
   assert.ok(notice.text.startsWith('Ana Souza foi adicionada, mas o convite não saiu.'))
 })
 
-test('aviso com senha inicial: sem convite, a pessoa entra com a senha combinada', () => {
+test('sem convite local, a pessoa entra pela conta Ávila Ops', () => {
   const notice = afterInvite({ ...base, invite_status: null, invite_detail: null }, 'adicionada')
-  assert.deepEqual(notice, { tone: 'success', text: 'Ana Souza já pode entrar no CRM com a senha inicial.' })
+  assert.deepEqual(notice, { tone: 'success', text: 'Ana Souza já pode entrar no CRM pela conta Ávila Ops.' })
 })

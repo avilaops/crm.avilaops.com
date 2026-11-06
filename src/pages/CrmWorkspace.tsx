@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useState } from 'react'
 import AppShell from '../components/layout/AppShell'
 import Copilot from '../components/layout/Copilot'
-import Login from '../components/layout/Login'
+import Landing from '../components/layout/Landing'
 import { type SessionUser } from '../lib/auth'
 import { NavigationContext } from '../lib/navigationContext'
 import { canManageRole, SessionContext } from '../lib/session'
@@ -21,7 +21,7 @@ function CrmWorkspace({ route, navigate }: CrmWorkspaceProps) {
 
   const signOut = useCallback(() => {
     // Espera o servidor encerrar a sessão antes de mostrar a entrada: a tela de
-    // login confere a sessão ao abrir e, com o cookie ainda vivo, devolveria a
+    // landing confere a sessão ao abrir e, com o cookie ainda vivo, devolveria a
     // pessoa para dentro do CRM sem ela pedir.
     window.location.assign('/api/auth/logout/central')
   }, [])
@@ -33,7 +33,7 @@ function CrmWorkspace({ route, navigate }: CrmWorkspaceProps) {
   const navigation = useMemo(() => ({ route, navigate }), [route, navigate])
 
   if (!session) {
-    return <Login onEnter={setUser} />
+    return <Landing onEnter={setUser} />
   }
 
   const inSettings = isSettingsPage(route.page)

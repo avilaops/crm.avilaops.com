@@ -43,13 +43,6 @@ export function getSsoStatus() {
   return fetchJson<SsoStatus>('/api/auth/sso/enabled')
 }
 
-export function login(email: string, password: string, tenantSlug?: string) {
-  return fetchJson<SessionResponse>('/api/auth/login', {
-    method: 'POST',
-    body: JSON.stringify({ email, password, tenantSlug: tenantSlug || undefined }),
-  })
-}
-
 export function logout() {
   return fetchJson<SessionResponse>('/api/auth/logout', { method: 'POST' })
 }

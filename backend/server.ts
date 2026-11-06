@@ -5,10 +5,9 @@ import fastifyMultipart from "@fastify/multipart";
 import fastifyStatic from "@fastify/static";
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import { existsSync } from "node:fs";
-import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, randomUUID, scrypt as scryptCallback, timingSafeEqual } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 import { z } from "zod";
 import { query, transaction } from "./db.js";
 import { registerCrmCoreRoutes } from "./routes-crm-core.js";
@@ -57,7 +56,6 @@ const SSO_COOKIE = "avila_sso";
 const SESSION_DAYS = 7;
 const SECRET_PREFIX = "v1:";
 const RATE_LIMITS = new Map<string, { count: number; resetAt: number }>();
-const scrypt = promisify(scryptCallback);
 
 type MetaIntegration = {
   app_id: string | null;
@@ -179,38 +177,6 @@ function isValidSignature(rawBody: Buffer, headerValue: string | undefined, appS
   const actual = Buffer.from(signatureHex, "hex");
   const expectedBuffer = Buffer.from(expected, "hex");
   return actual.length === expectedBuffer.length && timingSafeEqual(actual, expectedBuffer);
-}
-
-async function hashPassword(password: string) {
-  const salt = randomBytes(16).toString("hex");
-  const derived = (await scrypt(password, salt, 64)) as Buffer;
-  return `scrypt$${salt}$${derived.toString("hex")}`;
-}
-
-async function verifyPassword(password: string, stored: string | null) {
-  if (!stored) return false;
-  const [method, salt, expectedHex] = stored.split("$");
-  if (method !== "scrypt" || !salt || !expectedHex) return false;
-  const actual = (await scrypt(password, salt, 64)) as Buffer;
-  const expected = Buffer.from(expectedHex, "hex");
-  return actual.length === expected.length && timingSafeEqual(actual, expected);
-}
-
-async function ensureInitialAdminPassword() {
-  const password = process.env.ADMIN_INITIAL_PASSWORD;
-  if (!password) return;
-  const tenantId = await getTenantId();
-  const passwordHash = await hashPassword(password);
-  try {
-    await query("update users set password_hash = coalesce(password_hash, $1) where tenant_id = $2 and email = $3", [
-      passwordHash,
-      tenantId,
-      "nicolasrosaab@gmail.com",
-    ]);
-  } catch (error) {
-    if (typeof error === "object" && error && "code" in error && error.code === "42703") return;
-    throw error;
-  }
 }
 
 async function getSessionUser(cookieHeader?: string): Promise<AuthUser | null> {
@@ -740,17 +706,10 @@ async function processWhatsAppWebhook(tenantId: string, payload: WhatsAppWebhook
   return { messages, statuses };
 }
 
-const loginSchema = z.object({
-  email: z.string().email(),
-  password: z.string().min(8),
-  tenantSlug: z.string().trim().min(1).max(120).optional(),
-});
-
 const createUserSchema = z.object({
   name: z.string().trim().min(2).max(120),
   email: z.string().trim().email(),
   role: z.enum(["admin", "gerente", "atendente"]).default("atendente"),
-  password: z.string().min(8).max(120).optional(),
 });
 
 const updateUserSchema = z.object({
@@ -758,7 +717,6 @@ const updateUserSchema = z.object({
   email: z.string().trim().email().optional(),
   role: z.enum(["admin", "gerente", "atendente"]).optional(),
   active: z.boolean().optional(),
-  password: z.string().min(8).max(120).optional(),
 });
 
 const assignSchema = z.object({
@@ -890,8 +848,6 @@ export async function buildApp(options: { background?: boolean } = {}) {
   const app = Fastify({ logger: process.env.NODE_ENV !== "test" });
   renovacaoMetaLigada = options.background !== false;
   installErrorHandler(app);
-  if (options.background !== false) await ensureInitialAdminPassword();
-
   app.addContentTypeParser("application/json", { parseAs: "buffer" }, (request, body, done) => {
     const rawBody = Buffer.isBuffer(body) ? body : Buffer.from(String(body));
     (request as RawBodyRequest).rawBody = rawBody;
@@ -947,7 +903,7 @@ export async function buildApp(options: { background?: boolean } = {}) {
   });
 
   app.get("/api/auth/sso/enabled", async () => {
-    return { enabled: Boolean(process.env.SSO_BASE_URL?.trim()), url: urlLoginSso() };
+    return { enabled: true, url: urlLoginSso() };
   });
 
   app.get("/api/auth/oidc/start", async (request, reply) => {
@@ -972,7 +928,7 @@ export async function buildApp(options: { background?: boolean } = {}) {
    *
    * O resto do backend nao muda: continua lendo `agenda_session` da tabela
    * `sessions`, entao logout, expiracao e `last_seen_at` seguem funcionando
-   * igual ao login por senha.
+   * de forma uniforme para a sessao criada pelo Auth.
    */
   app.get("/api/auth/sso", async (request, reply) => {
     const params = request.query as { code?: string; state?: string; error?: string; tenantSlug?: string };
@@ -1051,43 +1007,6 @@ export async function buildApp(options: { background?: boolean } = {}) {
 
     reply.header("Set-Cookie", cabecalhoCookieSessao(sessionToken));
     return reply.redirect("/");
-  });
-
-  app.post("/api/auth/login", async (request, reply) => {
-    if (!checkRateLimit(`login:${request.ip}`, 10, 15 * 60 * 1000)) {
-      return reply.code(429).send({ error: "Muitas tentativas. Tente novamente em alguns minutos." });
-    }
-    const body = loginSchema.parse(request.body);
-    const result = await query<AuthUser & { password_hash: string | null }>(
-      `select u.id, u.tenant_id, u.name, u.email, u.role, u.password_hash
-       from users u
-       join tenants t on t.id = u.tenant_id
-       where lower(u.email) = lower($1) and t.slug = $2 and u.active = true`,
-      [body.email, body.tenantSlug ?? DEFAULT_TENANT_SLUG],
-    );
-    const user = result.rows[0];
-    if (!user || !(await verifyPassword(body.password, user.password_hash))) {
-      return reply.code(401).send({ error: "Email ou senha invalidos." });
-    }
-
-    const token = randomBytes(32).toString("hex");
-    const expiresAt = new Date(Date.now() + SESSION_DAYS * 24 * 60 * 60 * 1000);
-    await query("insert into sessions (tenant_id, user_id, token_hash, expires_at) values ($1, $2, $3, $4)", [
-      user.tenant_id,
-      user.id,
-      hashToken(token),
-      expiresAt.toISOString(),
-    ]);
-    await query("insert into events (tenant_id, actor_user_id, entity_type, entity_id, event_type) values ($1, $2, $3, $4, $5)", [
-      user.tenant_id,
-      user.id,
-      "user",
-      user.id,
-      "auth.login",
-    ]);
-
-    reply.header("Set-Cookie", cabecalhoCookieSessao(token));
-    return { authenticated: true, user: { id: user.id, tenant_id: user.tenant_id, name: user.name, email: user.email, role: user.role } };
   });
 
   app.post("/api/auth/logout", async (request, reply) => {
@@ -1173,20 +1092,16 @@ export async function buildApp(options: { background?: boolean } = {}) {
     if (!user) return;
     if (user.role !== "admin") return reply.code(403).send({ error: "Permissao insuficiente." });
     const body = createUserSchema.parse(request.body);
-    const passwordHash = body.password ? await hashPassword(body.password) : null;
     try {
       const result = await query<InvitedUser>(
         `insert into users (tenant_id, name, email, role, password_hash, active)
-         values ($1, $2, lower($3), $4, $5, true)
+         values ($1, $2, lower($3), $4, null, true)
          returning ${USER_COLUMNS}`,
-        [user.tenant_id, body.name, body.email, body.role, passwordHash],
+        [user.tenant_id, body.name, body.email, body.role],
       );
       const requestId = (request as RequestWithId).requestId;
       await recordEvent(user.tenant_id, "user", "user.created", { email: body.email, role: body.role }, user.id, result.rows[0].id, requestId);
-      // Sem senha inicial a pessoa entra pela conta Avila Ops: o convite por
-      // e-mail leva o endereco para criar a senha. Com senha inicial, quem
-      // cadastrou escolheu avisar por conta propria.
-      const created = passwordHash ? result.rows[0] : await inviteUser(user, result.rows[0], requestId);
+      const created = await inviteUser(user, result.rows[0], requestId);
       return reply.code(201).send({ user: created });
     } catch (error) {
       if (typeof error === "object" && error && "code" in error && error.code === "23505") {
@@ -1205,21 +1120,19 @@ export async function buildApp(options: { background?: boolean } = {}) {
     if (id === user.id && body.active === false) return reply.code(400).send({ error: "Voce nao pode desativar sua propria conta." });
     if (id === user.id && body.role && body.role !== user.role) return reply.code(400).send({ error: "Voce nao pode alterar seu proprio papel." });
 
-    const passwordHash = body.password ? await hashPassword(body.password) : undefined;
     try {
       const result = await query(
         `update users
          set name = coalesce($3, name),
              email = coalesce(lower($4), email),
              role = coalesce($5, role),
-             active = coalesce($6, active),
-             password_hash = coalesce($7, password_hash)
+             active = coalesce($6, active)
          where tenant_id = $1 and id = $2
          returning ${USER_COLUMNS}`,
-        [user.tenant_id, id, body.name ?? null, body.email ?? null, body.role ?? null, body.active ?? null, passwordHash ?? null],
+        [user.tenant_id, id, body.name ?? null, body.email ?? null, body.role ?? null, body.active ?? null],
       );
       if (!result.rows[0]) return reply.code(404).send({ error: "Usuario nao encontrado." });
-      await recordEvent(user.tenant_id, "user", "user.updated", { fields: Object.keys(body).filter((field) => field !== "password") }, user.id, id, (request as RequestWithId).requestId);
+      await recordEvent(user.tenant_id, "user", "user.updated", { fields: Object.keys(body) }, user.id, id, (request as RequestWithId).requestId);
       return { user: result.rows[0] };
     } catch (error) {
       if (typeof error === "object" && error && "code" in error && error.code === "23505") {
@@ -2580,9 +2493,6 @@ export async function buildApp(options: { background?: boolean } = {}) {
   registerAccountRoutes(app, {
     requireAuth,
     recordEvent,
-    hashPassword,
-    verifyPassword,
-    checkRateLimit,
     currentSessionHash: (request) => sessionHashFrom(request.headers.cookie),
   });
   if (options.background !== false) startAutomation({ decryptSecret, log: (mensagem, detalhe) => app.log.info({ detalhe }, mensagem) });

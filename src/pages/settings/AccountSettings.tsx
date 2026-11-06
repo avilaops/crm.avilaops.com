@@ -2,7 +2,7 @@ import { LogOut, MonitorSmartphone } from 'lucide-react'
 import { useEffect, useState, type FormEvent } from 'react'
 import { FormField, FormSection, Notice, StickyActionBar } from '../../components/ui/Form'
 import { ToneBadge } from '../../components/ui/StatusBadge'
-import { changePassword, getMe, listMySessions, revokeOtherSessions, updateMe, type AccountSession } from '../../lib/account'
+import { listMySessions, revokeOtherSessions, updateMe, type AccountSession } from '../../lib/account'
 import type { Tone } from '../../lib/connection'
 import { initials, roleLabel, useSession } from '../../lib/session'
 import { buttonClass } from '../../lib/ui'
@@ -105,22 +105,12 @@ export function ProfileSettings() {
 
 /** Minha conta › Segurança: senha e sessões abertas. */
 export function SecuritySettings() {
-  const [hasPassword, setHasPassword] = useState<boolean | null>(null)
   const [sessions, setSessions] = useState<AccountSession[] | null>(null)
-  const [passwords, setPasswords] = useState({ current: '', next: '', confirm: '' })
-  const [saving, setSaving] = useState(false)
   const [revoking, setRevoking] = useState(false)
-  const [feedback, setFeedback] = useState<Feedback>(null)
   const [sessionFeedback, setSessionFeedback] = useState<Feedback>(null)
 
   const [version, setVersion] = useState(0)
   const reloadSessions = () => setVersion((value) => value + 1)
-
-  useEffect(() => {
-    getMe()
-      .then((result) => setHasPassword(result.hasPassword))
-      .catch(() => setHasPassword(true))
-  }, [])
 
   useEffect(() => {
     let active = true
@@ -131,33 +121,6 @@ export function SecuritySettings() {
       active = false
     }
   }, [version])
-
-  const mismatch = passwords.confirm.length > 0 && passwords.next !== passwords.confirm
-  const tooShort = passwords.next.length > 0 && passwords.next.length < 8
-  const ready = passwords.current.length > 0 && passwords.next.length >= 8 && passwords.next === passwords.confirm
-
-  async function submitPassword(event: FormEvent) {
-    event.preventDefault()
-    if (!ready) return
-    setSaving(true)
-    setFeedback(null)
-    try {
-      const result = await changePassword({ currentPassword: passwords.current, newPassword: passwords.next })
-      setPasswords({ current: '', next: '', confirm: '' })
-      setFeedback({
-        tone: 'success',
-        text:
-          result.otherSessionsClosed > 0
-            ? `Senha alterada. ${result.otherSessionsClosed} outra(s) sessão(ões) foi(ram) encerrada(s).`
-            : 'Senha alterada.',
-      })
-      reloadSessions()
-    } catch (error) {
-      setFeedback({ tone: 'danger', text: errorText(error, 'Não foi possível alterar a senha.') })
-    } finally {
-      setSaving(false)
-    }
-  }
 
   async function revokeOthers() {
     setRevoking(true)
@@ -178,53 +141,8 @@ export function SecuritySettings() {
   return (
     <SettingsFrame page="security-settings" title="Segurança">
       <div className="space-y-5">
-        <FormSection title="Senha" description="Ao trocar a senha, as outras sessões abertas com a sua conta são encerradas.">
-          {hasPassword === false ? (
-            <Notice tone="info">Você entra pela conta Ávila Ops. A senha é a dessa conta, e muda por lá.</Notice>
-          ) : (
-            <form onSubmit={submitPassword} className="grid gap-4">
-              {feedback && <Notice tone={feedback.tone}>{feedback.text}</Notice>}
-              <FormField label="Senha atual">
-                <input
-                  className="input"
-                  type="password"
-                  autoComplete="current-password"
-                  value={passwords.current}
-                  onChange={(event) => setPasswords((current) => ({ ...current, current: event.target.value }))}
-                  required
-                />
-              </FormField>
-              <div className="grid gap-4 medium:grid-cols-2">
-                <FormField label="Nova senha" hint="Pelo menos 8 caracteres." error={tooShort ? 'Use pelo menos 8 caracteres.' : null}>
-                  <input
-                    className="input"
-                    type="password"
-                    autoComplete="new-password"
-                    aria-invalid={tooShort}
-                    value={passwords.next}
-                    onChange={(event) => setPasswords((current) => ({ ...current, next: event.target.value }))}
-                    required
-                  />
-                </FormField>
-                <FormField label="Repita a nova senha" error={mismatch ? 'As senhas não são iguais.' : null}>
-                  <input
-                    className="input"
-                    type="password"
-                    autoComplete="new-password"
-                    aria-invalid={mismatch}
-                    value={passwords.confirm}
-                    onChange={(event) => setPasswords((current) => ({ ...current, confirm: event.target.value }))}
-                    required
-                  />
-                </FormField>
-              </div>
-              <div>
-                <button type="submit" className={buttonClass.primary} disabled={!ready || saving}>
-                  {saving ? 'Alterando…' : 'Alterar senha'}
-                </button>
-              </div>
-            </form>
-          )}
+        <FormSection title="Acesso" description="O CRM usa exclusivamente a conta Ávila Ops para autenticação.">
+          <Notice tone="info">Para criar ou alterar sua senha, use a conta Ávila Ops. Não existe senha local neste CRM.</Notice>
         </FormSection>
 
         <section className="rounded-xl border border-slate-200 bg-white p-4 medium:p-6">

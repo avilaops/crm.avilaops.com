@@ -17,7 +17,7 @@ const roles = [
   { value: 'admin', label: 'Administrador', hint: 'Acesso total, inclusive canais e usuários.' },
 ]
 
-const emptyForm = { name: '', email: '', role: 'atendente', password: '' }
+const emptyForm = { name: '', email: '', role: 'atendente' }
 
 /**
  * Área de trabalho › Usuários e equipes.
@@ -59,7 +59,7 @@ export function UsersSettings() {
     setSaving(true)
     setFeedback(null)
     try {
-      const { user } = await createUser({ name: form.name.trim(), email: form.email.trim(), role: form.role, password: form.password || undefined })
+      const { user } = await createUser({ name: form.name.trim(), email: form.email.trim(), role: form.role })
       setForm(emptyForm)
       setFeedback(afterInvite(user, 'adicionada'))
       reload()
@@ -131,16 +131,6 @@ export function UsersSettings() {
                     <option key={role.value} value={role.value}>{role.label}</option>
                   ))}
                 </select>
-              </FormField>
-              <FormField label="Senha inicial" hint="Deixe em branco: a pessoa recebe um convite por e-mail e cria a própria senha na conta Ávila Ops.">
-                <input
-                  className="input"
-                  type="password"
-                  autoComplete="new-password"
-                  minLength={8}
-                  value={form.password}
-                  onChange={(event) => setForm({ ...form, password: event.target.value })}
-                />
               </FormField>
             </div>
             <div>

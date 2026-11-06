@@ -45,5 +45,5 @@ export function afterInvite(user: Invited, verb: 'adicionada' | 'convidada'): { 
     const lead = verb === 'adicionada' ? `${user.name} foi adicionada, mas o convite não saiu` : 'O convite não saiu'
     return { tone: 'warning', text: `${lead}. ${user.invite_detail ?? ''}`.trim() }
   }
-  return { tone: 'success', text: `${user.name} já pode entrar no CRM com a senha inicial.` }
+  return { tone: 'success', text: `${user.name} já pode entrar no CRM pela conta Ávila Ops.` }
 }
