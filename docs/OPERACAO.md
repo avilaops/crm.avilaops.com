@@ -1,5 +1,22 @@
 # Ávila CRM - Operacao
 
+## Credenciais do MCP
+
+O endpoint `/mcp` mantém a credencial existente em `CRM_MCP_TOKEN_SHA256`
+(ou `CRM_MCP_TOKEN`) vinculada à empresa definida em `CRM_MCP_TENANT_ID`.
+Para separar clientes, configure `CRM_MCP_CREDENTIALS_JSON` no ambiente do
+backend com uma lista de até 100 objetos. Cada objeto contém `tokenHash`
+(SHA-256 hexadecimal minúsculo de um Bearer exclusivo) e `tenantId` (UUID da
+empresa). O processo lê a configuração ao iniciar. Digests duplicados,
+inclusive com a credencial existente, tornam a configuração inválida.
+
+Cada credencial válida tem 120 requisições por minuto por processo do CRM.
+Clientes que usam a mesma credencial compartilham essa cota. Tentativas
+inválidas têm uma cota separada de 120 por minuto por par TCP imediato, que
+normalmente é o Caddy. Cabeçalhos de origem e sessão não compõem a chave.
+O endpoint administrativo existente de recuperação continua restrito à
+credencial legada e aos administradores da empresa correspondente.
+
 ## Produção hoje
 
 Desde 08/10/2026 o CRM roda no servidor `applications`, no padrão da

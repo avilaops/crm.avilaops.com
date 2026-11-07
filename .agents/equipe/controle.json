@@ -15,6 +15,22 @@
         "Consulta de contatos e conversas com paginação",
         "Publicação no endpoint solicitado e conector privado"
       ]
+    },
+    {
+      "id": "MCP-002",
+      "title": "Isolar cotas do MCP por credencial autenticada",
+      "status": "em-revisao",
+      "responsavel": null,
+      "objetivo": "Evitar que clientes distintos atrás do Caddy consumam a mesma cota de requisições válidas.",
+      "criteriosAceite": [
+        "Aplicar cotas independentes a credenciais verificadas e separar tentativas inválidas",
+        "Impedir contorno por cabeçalhos e manter isolamento entre empresas",
+        "Preservar as quatro ferramentas somente leitura e submeter a correção à revisão antes de publicar"
+      ],
+      "evidencias": [
+        "backend/test/mcp.test.mjs",
+        "Teste de isolamento do CRM em PostgreSQL 18.6 descartável"
+      ]
     }
   ],
   "decisions": [

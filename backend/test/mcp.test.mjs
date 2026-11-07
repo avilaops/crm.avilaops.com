@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createHash } from "node:crypto";
+import { createServer, request } from "node:http";
 import Fastify from "fastify";
 import { registerMcpRoutes } from "../../dist-server/routes-mcp.js";
 const token = "test-only-credential-".repeat(3);
@@ -16,7 +17,21 @@ async function fixture(t, options = {}) {
   await app.listen({ host: "127.0.0.1", port: 0 });
   t.after(() => app.close());
   const url = "http://127.0.0.1:" + app.server.address().port + "/mcp";
-  const rpc = (method, params = {}, headers = {}) => fetch(url, { method: "POST", headers: { authorization: "Bearer " + token, "content-type": "application/json", accept: "application/json, text/event-stream", ...headers }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }) });
+  let rpcUrl = url;
+  if (options.proxy) {
+    const proxy = createServer((incoming, outgoing) => {
+      const upstream = request(url, { method: incoming.method, headers: incoming.headers }, response => {
+        outgoing.writeHead(response.statusCode, response.headers);
+        response.pipe(outgoing);
+      });
+      upstream.on("error", () => { outgoing.writeHead(502).end(); });
+      incoming.pipe(upstream);
+    });
+    await new Promise(resolve => proxy.listen(0, "127.0.0.1", resolve));
+    t.after(() => new Promise(resolve => proxy.close(resolve)));
+    rpcUrl = "http://127.0.0.1:" + proxy.address().port + "/mcp";
+  }
+  const rpc = (method, params = {}, headers = {}) => fetch(rpcUrl, { method: "POST", headers: { authorization: "Bearer " + token, "content-type": "application/json", accept: "application/json, text/event-stream", ...headers }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }) });
   return { calls, rpc, url };
 }
 test("MCP initialize and tools/list expose only four read-only tools", async t => {
@@ -89,4 +104,68 @@ test("credential retrieval requires an administrator in exactly the configured t
     if (status === 200) assert.equal(data.token, token);
     else assert.equal(data.token, undefined);
   }
+});
+
+const secondToken = "second-test-credential-".repeat(3);
+const otherToken = "other-company-credential-".repeat(3);
+const otherTenant = "e23b966b-e1b5-4320-8144-28587e541d2a";
+const extraCredentials = [
+  { tokenHash: createHash("sha256").update(secondToken).digest("hex"), tenantId },
+  { tokenHash: createHash("sha256").update(otherToken).digest("hex"), tenantId: otherTenant },
+];
+
+test("MCP clients sharing a proxy have independent quotas and cannot reset them with headers", async t => {
+  const { rpc } = await fixture(t, { proxy: true, config: { extraCredentials } });
+  for (let i = 0; i < 120; i++) {
+    assert.equal((await rpc("tools/list")).status, 200);
+  }
+  const limited = await rpc("tools/list", {}, {
+    "x-forwarded-for": "203.0.113.11",
+    "cf-connecting-ip": "203.0.113.12",
+    "mcp-session-id": "another-session",
+  });
+  assert.equal(limited.status, 429);
+  assert.ok(Number(limited.headers.get("retry-after")) > 0);
+  assert.equal((await rpc("tools/list", {}, { authorization: "Bearer " + secondToken })).status, 200);
+});
+
+test("rotating invalid credentials and forwarded IPs exhaust only the socket's invalid quota", async t => {
+  const { rpc, calls } = await fixture(t);
+  for (let i = 0; i <= 120; i++) {
+    const response = await rpc("tools/list", {}, {
+      authorization: "Bearer " + "invalid-credential-".repeat(3) + i,
+      "x-forwarded-for": "203.0.113." + i,
+    });
+    assert.equal(response.status, i === 120 ? 429 : 401);
+  }
+  assert.equal(calls.length, 0);
+  assert.equal((await rpc("tools/list")).status, 200);
+});
+
+test("an independently configured credential scopes all four tools to its own company", async t => {
+  const { rpc, calls } = await fixture(t, { config: { extraCredentials } });
+  for (const [name, args] of [
+    ["crm_search_contacts", {}],
+    ["crm_get_contact", { contact_id: tenantId }],
+    ["crm_list_conversations", { contact_id: tenantId }],
+    ["crm_list_messages", { conversation_id: tenantId }],
+  ]) {
+    const response = await rpc("tools/call", { name, arguments: args }, {
+      authorization: "Bearer " + otherToken,
+      "x-tenant-id": tenantId,
+    });
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).result.isError, undefined);
+    assert.equal(calls.at(-1).params[0], otherTenant);
+    assert.match(calls.at(-1).sql, /tenant_id = \$1/);
+  }
+});
+
+test("a digest cannot be configured for two companies", async t => {
+  const digest = createHash("sha256").update(token).digest("hex");
+  const { rpc, calls } = await fixture(t, { config: {
+    extraCredentials: [{ tokenHash: digest, tenantId: otherTenant }],
+  } });
+  assert.equal((await rpc("tools/list")).status, 503);
+  assert.equal(calls.length, 0);
 });
