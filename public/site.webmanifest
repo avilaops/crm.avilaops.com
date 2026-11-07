@@ -1,15 +1,15 @@
 {
-  "name": "Ávila CRM — Ávila Ops",
-  "short_name": "Ávila CRM",
+  "name": "Avila CRM | Avila Ops",
+  "short_name": "Avila CRM",
   "icons": [
     {
-      "src": "/avila-ops-mark.svg",
+      "src": "/avila-crm-symbol.svg",
       "sizes": "any",
       "type": "image/svg+xml",
       "purpose": "maskable"
     },
     {
-      "src": "/avila-ops-mark.svg",
+      "src": "/avila-crm-symbol.svg",
       "sizes": "any",
       "type": "image/svg+xml",
       "purpose": "maskable"

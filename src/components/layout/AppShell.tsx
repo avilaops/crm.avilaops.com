@@ -109,7 +109,7 @@ function Brand({ compact = false }: { compact?: boolean }) {
   return compact ? (
     <span className="grid size-10 place-items-center rounded-xl bg-slate-950" aria-label="Ávila CRM"><AvilaMark className="size-8" /></span>
   ) : (
-    <span className="flex items-center gap-2"><AvilaMark className="size-9" /><span><span className="block text-lg font-black tracking-tight text-slate-900">Avila CRM</span><span className="block text-[10px] font-medium tracking-[0.12em] text-slate-500">Ávila Ops</span></span></span>
+    <span className="flex items-center gap-2"><AvilaMark className="size-9" /><span><span className="block text-lg font-black tracking-tight text-slate-900">Avila CRM</span><span className="block text-[10px] font-medium tracking-[0.12em] text-slate-500">Avila Ops</span></span></span>
   )
 }
 
