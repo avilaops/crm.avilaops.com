@@ -1,9 +1,19 @@
 import { useCallback, useEffect, useState } from 'react'
 import CrmWorkspace from './pages/CrmWorkspace'
+import PublicMdxPage from './components/public/PublicMdxPage'
 import { hashFor, hashFromPathname, parseHash } from './routes'
 import type { Page, Route } from './types'
 
 const basePath = import.meta.env.BASE_URL
+
+function publicPath(pathname: string): '/' | '/docs/' | '/privacidade/' | '/termos/' | null {
+  const path = pathname.replace(/\/+$/, '') || '/'
+  if (path === '/') return null
+  if (path === '/docs') return '/docs/'
+  if (path === '/privacidade') return '/privacidade/'
+  if (path === '/termos') return '/termos/'
+  return null
+}
 
 /** Troca o endereço sem criar entrada no histórico (redirecionamento). */
 function replaceHash(route: Route) {
@@ -11,6 +21,7 @@ function replaceHash(route: Route) {
 }
 
 function readRoute(): Route {
+  if (publicPath(window.location.pathname)) return parseHash('').route
   // Caminho sem hash (link colado, favorito antigo): vira hash na raiz do app.
   const fromPathname = window.location.hash ? null : hashFromPathname(window.location.pathname, basePath)
   const resolved = parseHash(fromPathname ?? window.location.hash)
@@ -22,6 +33,7 @@ function readRoute(): Route {
 }
 
 function App() {
+  const publicPage = publicPath(window.location.pathname)
   const [route, setRoute] = useState<Route>(readRoute)
 
   useEffect(() => {
@@ -40,6 +52,7 @@ function App() {
     setRoute(nextRoute)
   }, [])
 
+  if (publicPage) return <PublicMdxPage path={publicPage} />
   return <CrmWorkspace route={route} navigate={navigate} />
 }
 

@@ -1,5 +1,40 @@
 @import "tailwindcss";
 
+@theme {
+  --font-sans: Inter, ui-sans-serif, system-ui, sans-serif;
+}
+
+.public-mdx-grid {
+  background-image: linear-gradient(rgba(255, 255, 255, .035) 1px, transparent 1px), linear-gradient(90deg, rgba(255, 255, 255, .035) 1px, transparent 1px);
+  background-size: 44px 44px;
+  mask-image: linear-gradient(to bottom, black, transparent 78%);
+}
+
+.public-mdx-heading {
+  max-width: 780px;
+  color: #f4f1e8;
+  font-size: clamp(3.5rem, 8vw, 7rem);
+  font-weight: 650;
+  letter-spacing: -.065em;
+  line-height: .94;
+}
+
+.public-mdx-h2 { color: #f4f1e8; font-size: 1.65rem; font-weight: 650; letter-spacing: -.03em; }
+.public-mdx-h3 { color: #f4f1e8; font-size: 1.1rem; font-weight: 650; }
+.public-mdx-copy { max-width: 720px; color: #b7c0ba; font-size: 1.05rem; line-height: 1.8; }
+.public-mdx-list { max-width: 720px; display: grid; gap: .8rem; color: #c6d0c9; line-height: 1.7; }
+.public-mdx-eyebrow { color: #f6c945; font-size: .7rem; font-weight: 750; letter-spacing: .18em; }
+.public-mdx-button, .public-mdx-button-secondary { display: inline-flex; min-height: 3rem; align-items: center; justify-content: center; gap: .5rem; border-radius: .65rem; padding: .75rem 1.1rem; font-size: .875rem; font-weight: 700; transition: transform .18s ease, border-color .18s ease, background-color .18s ease; }
+.public-mdx-button { background: #f4f1e8; color: #101312; box-shadow: 0 16px 40px rgba(0, 0, 0, .2); }
+.public-mdx-button:hover, .public-mdx-button-secondary:hover { transform: translateY(-2px); }
+.public-mdx-button-secondary { border: 1px solid #68756d; color: #f4f1e8; }
+.public-mdx-button-secondary:hover { border-color: #f6c945; color: #f6c945; }
+.public-mdx-preview { border: 1px solid rgba(255, 255, 255, .12); border-radius: 1.5rem; background: #181d1b; padding: 1.25rem; box-shadow: 0 24px 80px rgba(0, 0, 0, .28); }
+.public-mdx-card { min-height: 190px; border: 1px solid rgba(255, 255, 255, .12); border-radius: 1rem; background: rgba(24, 29, 27, .88); padding: 1.25rem; }
+.public-mdx-card h2 { color: #f4f1e8; font-size: 1rem; font-weight: 650; }
+.public-mdx-card p { margin-top: .65rem; color: #aab5ae; font-size: .875rem; line-height: 1.65; }
+.public-mdx-icon { display: grid; width: 2.5rem; height: 2.5rem; place-items: center; margin-bottom: 1.25rem; border-radius: .75rem; background: rgba(246, 201, 69, .13); color: #f6c945; }
+
 /*
  * Tokens do layout responsivo.
  *

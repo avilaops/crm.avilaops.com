@@ -1,0 +1,32 @@
+import { ArrowRight, Bot, Inbox, UsersRound } from 'lucide-react'
+
+export function AuthActions({ authUrl, signupUrl, checking }) {
+  if (checking) return <p className="mt-8 text-sm text-[#aab5ae]">Conectando ao acesso Avila Ops…</p>
+  if (!authUrl) return <p className="mt-8 text-sm text-[#f6c945]">O acesso Avila Ops está indisponível no momento.</p>
+  return <div className="mt-8 flex flex-wrap gap-3"><a className="public-mdx-button" href={authUrl}>Acessar o CRM <ArrowRight size={18} aria-hidden="true" /></a>{signupUrl && <a className="public-mdx-button-secondary" href={signupUrl}>Criar minha conta</a>}</div>
+}
+
+export function Feature({ icon: Icon, title, children }) {
+  return <article className="public-mdx-card"><div className="public-mdx-icon"><Icon size={19} aria-hidden="true" /></div><h2>{title}</h2><p>{children}</p></article>
+}
+
+export function Preview() {
+  return <div className="public-mdx-preview"><div className="flex items-start justify-between border-b border-white/10 pb-5"><div><p className="public-mdx-eyebrow">VISÃO DA OPERAÇÃO</p><p className="mt-2 text-lg font-semibold text-white">Hoje, sem ruído</p></div><span className="rounded-full bg-[#33d69f]/15 px-3 py-1 text-xs font-semibold text-[#65e7b8]">Ativo</span></div><div className="grid gap-3 py-5 sm:grid-cols-2">{['12 conversas aguardando', '8 oportunidades em avanço', '24 contatos acompanhados', '3 tarefas para hoje'].map((item, index) => <div className="rounded-xl border border-white/10 bg-white/[0.04] p-4" key={item}><div className={`mb-4 h-1.5 w-10 rounded-full ${index % 2 ? 'bg-[#77d3e8]' : 'bg-[#f6c945]'}`} /><p className="text-sm text-[#c6d0c9]">{item}</p></div>)}</div><p className="border-t border-white/10 pt-5 text-sm leading-6 text-[#93a099]">Cada pessoa sabe o que precisa acontecer a seguir.</p></div>
+}
+
+<section className="mx-auto grid max-w-7xl gap-14 px-6 pb-20 pt-20 lg:grid-cols-[1.05fr_.95fr] lg:items-center lg:px-10 lg:pb-28 lg:pt-28">
+  <div>
+    <p className="public-mdx-eyebrow">OPERAÇÃO MAIS CLARA</p>
+    <h1 className="public-mdx-heading">Relacionamentos bem cuidados viram crescimento.</h1>
+    <p className="mt-7 max-w-xl text-lg leading-8 text-[#b7c0ba] sm:text-xl">O CRM da Avila Ops para sua equipe acompanhar conversas, oportunidades e clientes com contexto, ritmo e responsabilidade.</p>
+    <AuthActions authUrl={props.authUrl} signupUrl={props.signupUrl} checking={props.checking} />
+    <div className="mt-10 flex items-center gap-2 text-sm text-[#87938b]"><span className="size-2 rounded-full bg-[#33d69f]" /> Sessão protegida pela conta Avila Ops</div>
+  </div>
+  <Preview />
+</section>
+
+<section id="produto" className="mx-auto grid max-w-7xl gap-4 px-6 pb-8 sm:grid-cols-3 lg:px-10">
+  <Feature icon={Inbox} title="Conversas em um só lugar">Organize atendimento, histórico e próximos passos sem alternar entre ferramentas.</Feature>
+  <Feature icon={UsersRound} title="Relacionamentos que continuam">Tenha contexto de pessoas, empresas e oportunidades em cada contato.</Feature>
+  <Feature icon={Bot} title="Automação com supervisão">Use IA para acelerar o trabalho, mantendo a decisão nas mãos da equipe.</Feature>
+</section>

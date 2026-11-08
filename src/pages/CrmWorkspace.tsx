@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useState } from 'react'
 import AppShell from '../components/layout/AppShell'
 import Copilot from '../components/layout/Copilot'
-import Landing from '../components/layout/Landing'
+import PublicMdxPage from '../components/public/PublicMdxPage'
 import { type SessionUser } from '../lib/auth'
 import { NavigationContext } from '../lib/navigationContext'
 import { canManageRole, SessionContext } from '../lib/session'
@@ -33,7 +33,7 @@ function CrmWorkspace({ route, navigate }: CrmWorkspaceProps) {
   const navigation = useMemo(() => ({ route, navigate }), [route, navigate])
 
   if (!session) {
-    return <Landing onEnter={setUser} />
+    return <PublicMdxPage path="/" onEnter={setUser} />
   }
 
   const inSettings = isSettingsPage(route.page)
