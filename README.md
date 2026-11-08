@@ -63,11 +63,16 @@ conta num dado que quase nao muda.
 
 ```powershell
 npm install
+$env:PORT='3001'
 npm run db:migrate
 npm run dev:full
 ```
 
-O Vite abrirá a aplicação em `http://localhost:5173` e redirecionará `/api` para o backend em `http://localhost:3000`.
+O Next.js abre a aplicação em `http://localhost:5173` e encaminha `/api` para o Fastify em `http://127.0.0.1:3001`. Configure `PORT=3001` no `.env.local`; `CRM_API_ORIGIN` permite usar outro endereço de API. O retorno do login local usa `CRM_BASE_URL=http://localhost:5173` e um cliente OIDC com o callback exato `http://localhost:5173/api/auth/sso` autorizado no Auth.
+
+Todas as telas possuem um `page.mdx` em `src/app`, incluindo uma rota dinâmica para conversas. Os componentes interativos ficam em `src/features`, e a sessão compartilhada e os layouts em `src/components`. A navegação usa URLs nativas; favoritos antigos com `#/` continuam funcionando. A barra lateral animada pode ser recolhida, abre submenus e usa um diálogo com controle de foco no celular; respeita a preferência por movimento reduzido.
+
+As páginas públicas editáveis ficam em `src/content/public`. Credenciais de banco e OIDC permanecem no `.env.local`, ignorado pelo Git. Para consultar produção por túnel SSH, mantenha `AUTOMATION_DISABLED=true` no ambiente local e não execute migrações contra o banco de produção.
 
 ## Validação
 
@@ -81,7 +86,7 @@ front (`npm run test:web`: rotas, tabela de preço do WhatsApp, formatação e
 checklist de ativação) e o build.
 
 As telas nos tamanhos reais de uso (375, 390, 768, 1024 e 1440 px) são
-conferidas com a API simulada por `scripts/telas/verificar.mjs`, com o Vite
+conferidas com a API simulada por `scripts/telas/verificar.mjs`, com o Next.js
 rodando; o como está em [`docs/PLANO-MOBILE-E-CANAIS.md`](docs/PLANO-MOBILE-E-CANAIS.md#como-validar).
 
 ## Execução com backend
@@ -92,7 +97,7 @@ npm run build
 npm start
 ```
 
-O backend serve a API e o frontend compilado no mesmo processo.
+`npm start` define o ambiente de produção e inicia o Fastify, que serve a API e delega as páginas e os arquivos compilados ao Next.js no mesmo processo. Em produção, configure `PORT=3000`; no desenvolvimento local a API usa a porta configurada no `.env.local`.
 
 - Frontend: `http://localhost:3000/`
 - API: `http://localhost:3000/api`

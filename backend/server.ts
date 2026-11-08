@@ -1,13 +1,11 @@
 import { googleRedirectUri } from "./google-config.js";
 import { encerrarLangfuse } from "./langfuse.js";
 import { config } from "dotenv";
+import type { IncomingMessage, ServerResponse } from "node:http";
+import { createRequire } from "node:module";
 import fastifyMultipart from "@fastify/multipart";
-import fastifyStatic from "@fastify/static";
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
-import { existsSync } from "node:fs";
 import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { query, transaction } from "./db.js";
 import { registerCrmCoreRoutes } from "./routes-crm-core.js";
@@ -50,7 +48,7 @@ config({ path: ".env" });
 const META_GRAPH_VERSION = "v23.0";
 const META_PROVIDER = "meta";
 const DEFAULT_TENANT_SLUG = process.env.DEFAULT_TENANT_SLUG ?? "avila-ops";
-const PORT = Number(process.env.PORT ?? 3000);
+const PORT = Number(process.env.PORT ?? (process.env.NODE_ENV === "production" ? 3000 : 3001));
 const SESSION_COOKIE = "agenda_session";
 const SSO_COOKIE = "avila_sso";
 const SESSION_DAYS = 7;
@@ -115,9 +113,6 @@ type WhatsAppWebhookPayload = {
 
 type RequestWithId = FastifyRequest & { requestId?: string };
 
-const here = dirname(fileURLToPath(import.meta.url));
-const rootDir = join(here, "..");
-const distDir = join(rootDir, "dist");
 
 function parseCookies(header?: string) {
   const cookies = new Map<string, string>();
@@ -850,7 +845,7 @@ async function inviteUser(admin: AuthUser, target: InvitedUser, requestId?: stri
   return saved.rows[0] ?? target;
 }
 
-export async function buildApp(options: { background?: boolean } = {}) {
+export async function buildApp(options: { background?: boolean; frontendHandler?: (request: IncomingMessage, response: ServerResponse) => Promise<void> } = {}) {
   const app = Fastify({ logger: process.env.NODE_ENV !== "test" });
   renovacaoMetaLigada = options.background !== false;
   installErrorHandler(app);
@@ -881,20 +876,22 @@ export async function buildApp(options: { background?: boolean } = {}) {
     limits: { fileSize: maxMediaBytes(), files: 1, fields: 10 },
   });
 
-  app.addHook("onRequest", async (request) => {
+  app.addHook("onRequest", async (request, reply) => {
     const incoming = request.headers["x-request-id"];
     (request as RequestWithId).requestId = typeof incoming === "string" && incoming.length <= 120 ? incoming : randomUUID();
+    // O Next escreve diretamente na resposta. Estes cabeçalhos precisam
+    // existir antes da delegação, que dispensa o onSend do Fastify.
+    reply.raw.setHeader("X-Request-Id", (request as RequestWithId).requestId!);
+    reply.raw.setHeader("X-Content-Type-Options", "nosniff");
+    reply.raw.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+    reply.raw.setHeader("X-Frame-Options", "DENY");
+    reply.raw.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
   });
 
   app.addHook("onSend", async (request, reply, payload) => {
-    reply.header("X-Request-Id", (request as RequestWithId).requestId ?? randomUUID());
     if (request.url.startsWith("/api/")) {
       reply.header("Cache-Control", "no-store");
     }
-    reply.header("X-Content-Type-Options", "nosniff");
-    reply.header("Referrer-Policy", "strict-origin-when-cross-origin");
-    reply.header("X-Frame-Options", "DENY");
-    reply.header("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
     return payload;
   });
 
@@ -2503,18 +2500,11 @@ export async function buildApp(options: { background?: boolean } = {}) {
   });
   if (options.background !== false) startAutomation({ decryptSecret, log: (mensagem, detalhe) => app.log.info({ detalhe }, mensagem) });
 
-  if (existsSync(distDir)) {
-    await app.register(fastifyStatic, {
-      root: distDir,
-      prefix: "/",
-      wildcard: false,
-    });
-
-    app.setNotFoundHandler((request, reply) => {
-      if (request.url.startsWith("/api/")) {
-        return reply.code(404).send({ error: "Rota nao encontrada." });
-      }
-      return reply.sendFile("index.html");
+  if (options.frontendHandler) {
+    app.setNotFoundHandler(async (request, reply) => {
+      if (request.url.startsWith("/api/")) return reply.code(404).send({ error: "Rota nao encontrada." });
+      reply.hijack();
+      await options.frontendHandler!(request.raw, reply.raw);
     });
   }
 
@@ -2523,7 +2513,18 @@ export async function buildApp(options: { background?: boolean } = {}) {
 }
 
 if (process.env.CRM_TEST_MODE !== "1") {
-  buildApp().then(async (app) => {
+  const iniciar = async () => {
+    if (process.env.NODE_ENV !== "production") return buildApp();
+    // Next expõe uma função CommonJS. Carregar pelo require preserva esse
+    // contrato no backend ESM/NodeNext, sem depender de default interop.
+    const createNext = createRequire(import.meta.url)("next") as typeof import("next/dist/server/next.js").default;
+    const frontend = createNext({ dev: false });
+    await frontend.prepare();
+    const app = await buildApp({ frontendHandler: frontend.getRequestHandler() });
+    app.addHook("onClose", () => frontend.close());
+    return app;
+  };
+  iniciar().then(async (app) => {
     await app.listen({ host: "0.0.0.0", port: PORT });
     let encerrando = false;
     const encerrar = () => {

@@ -15,7 +15,7 @@ COPY packages/cli ./packages/cli
 # comprometida não ganha um shell dentro da imagem que vai para produção.
 RUN npm ci --ignore-scripts --no-audit --no-fund
 COPY . .
-# O Vite grava as VITE_* no bundle durante o build, e no runner não existe .env.
+# O Next grava as variáveis públicas no bundle durante o build.
 # Elas chegam como build-arg, das variáveis do repositório. São públicas por
 # definição: terminam no JavaScript que o navegador baixa.
 ARG VITE_SUPORTE_WHATSAPP
@@ -32,12 +32,15 @@ ENV APP_REVISION=$GIT_SHA
 COPY package.json package-lock.json ./
 COPY packages/cli ./packages/cli
 RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund && npm cache clean --force
-COPY --from=build /app/dist ./dist
+COPY --from=build /app/.next ./.next
+COPY --from=build /app/public ./public
+COPY next.config.mjs postcss.config.mjs ./
 COPY --from=build /app/dist-server ./dist-server
 # O backend em TypeScript vai junto para `npm run db:migrate` e o
 # `agenda db migrate` do CLI funcionarem no artefato como na máquina de
 # desenvolvimento. É por isso que o tsx é dependência de execução.
 COPY backend ./backend
+COPY scripts/start.mjs ./scripts/start.mjs
 COPY --chmod=755 scripts/iniciar-container.sh /usr/local/bin/iniciar-container
 # O processo roda como node. Um volume novo montado em /app/storage herda este
 # dono; um antigo, gravado como root, é barrado pelo ponto de entrada.

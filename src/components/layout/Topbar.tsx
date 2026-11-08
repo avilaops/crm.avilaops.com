@@ -1,5 +1,6 @@
 import { sectionOf } from '../../navigation'
 import { useNavigation } from '../../lib/navigationContext'
+import { AnimatedSidebarTrigger } from '../ui/animated-sidebar'
 
 /**
  * Cabeçalho das telas do workspace.
@@ -21,6 +22,8 @@ function Topbar({ title, tab, action, onAction }: { title: string; tab?: string;
   return (
     <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/95 pt-[env(safe-area-inset-top)] backdrop-blur">
       <div className="flex min-h-14 items-center gap-3 px-4 medium:px-5 expanded:min-h-16">
+        <AnimatedSidebarTrigger />
+        <span aria-hidden="true" className="h-5 w-px shrink-0 bg-slate-200" />
         <div className="min-w-0 flex-1">
           <h1 className="truncate text-base font-semibold text-slate-900 expanded:text-lg">{title}</h1>
           {tab && <p className="truncate text-xs text-slate-500">{tab}</p>}

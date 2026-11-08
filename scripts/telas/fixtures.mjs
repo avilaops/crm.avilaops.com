@@ -121,6 +121,7 @@ export function routeApi(url, method) {
   if (path === '/api/pipelines') return { pipelines: [{ id: 'p1', name: 'Comercial', stages }] }
   if (path === '/api/companies') return { companies: [], pagination: { page: 1, pageSize: 50, total: 0 } }
   if (path === '/api/tasks') return { tasks: [], pagination: { page: 1, pageSize: 50, total: 0 } }
+  if (path === '/api/tasks/reminders') return { tasks: [] }
   if (path === '/api/settings') return { settings }
   if (path === '/api/knowledge') return { sources: [] }
   if (path === '/api/audit-logs') return { logs: [], pagination: { page: 1, pageSize: 50, total: 0 } }

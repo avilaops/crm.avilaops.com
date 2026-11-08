@@ -6,7 +6,7 @@ name: Prints do painel
 # tablet rolar para o lado ou cortar campo.
 #
 # Veio do app.avilaops.com, onde o painel é Next.js com Prisma e precisa de
-# banco descartável e dados semeados. Aqui o painel é um SPA do Vite e a API é
+# banco descartável e dados semeados. Aqui o painel usa Next.js e a API é
 # respondida pelo scripts/telas/fixtures.mjs dentro do navegador: não sobe
 # banco, não publica imagem e não usa segredo.
 on:
@@ -15,9 +15,9 @@ on:
     paths:
       - "src/**"
       - "public/**"
-      - "index.html"
-      - "vite.config.ts"
-      # Atualizar React, Tailwind, Vite ou Radix muda as telas sem tocar em
+      - "next.config.mjs"
+      - "postcss.config.mjs"
+      # Atualizar React, Tailwind, Next.js ou Radix muda as telas sem tocar em
       # nenhuma das pastas acima.
       - "package.json"
       - "package-lock.json"
@@ -46,18 +46,18 @@ jobs:
           npx playwright install --with-deps chromium
       - name: Subir o painel
         run: |
-          npx vite --host 127.0.0.1 --port 5173 --strictPort > vite.log 2>&1 &
+          npm run dev:web > next.log 2>&1 &
           for _ in $(seq 1 60); do
             curl -sf http://127.0.0.1:5173/ > /dev/null && exit 0
             sleep 1
           done
-          echo "O Vite não respondeu em 60 s." >&2
+          echo "O Next.js não respondeu em 60 s." >&2
           exit 1
       - name: Capturar e conferir
         run: node scripts/telas/verificar.mjs prints
-      - name: Log do Vite
+      - name: Log do Next.js
         if: always()
-        run: tail -n 100 vite.log || true
+        run: tail -n 100 next.log || true
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:

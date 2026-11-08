@@ -9,7 +9,7 @@
  */
 import { parseSupportContact } from './supportConfig'
 
-const { whatsapp, email } = parseSupportContact(import.meta.env.VITE_SUPORTE_WHATSAPP, import.meta.env.VITE_SUPORTE_EMAIL)
+const { whatsapp, email } = parseSupportContact(process.env.NEXT_PUBLIC_SUPORTE_WHATSAPP, process.env.NEXT_PUBLIC_SUPORTE_EMAIL)
 
 export type SupportLinks = { whatsapp: string | null; email: string | null }
 

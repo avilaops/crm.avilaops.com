@@ -9,9 +9,11 @@
 !public
 !src
 !backend
-!vite.config.ts
+!next.config.mjs
+!postcss.config.mjs
 !tsconfig*.json
 !scripts/iniciar-container.sh
+!scripts/start.mjs
 
 # Nem dentro das pastas incluídas.
 **/node_modules

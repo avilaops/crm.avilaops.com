@@ -5,7 +5,7 @@
 // rolagem horizontal, campo cortado, campo com fonte abaixo de 16 px no celular
 // (o Safari do iPhone dá zoom) e alvo de toque abaixo de 44 px.
 //
-// Uso, com o Vite rodando (`npm run dev`):
+// Uso, com o Next.js rodando (`npm run dev`):
 //
 //   node scripts/telas/verificar.mjs [pasta] [filtro-de-tela] [larguras]
 //   node scripts/telas/verificar.mjs telas-capturas 'config' 375,390
@@ -112,7 +112,7 @@ function measure(viewportWidth) {
   }
 }
 
-const browser = await chromium.launch()
+const browser = await chromium.launch({ channel: process.env.BROWSER_CHANNEL || undefined })
 const report = []
 mkdirSync(OUT, { recursive: true })
 
