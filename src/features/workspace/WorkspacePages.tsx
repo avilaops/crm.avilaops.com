@@ -7,7 +7,7 @@ import { useEffect, useRef, useState } from 'react'
 import Topbar from '../../components/layout/Topbar'
 import { Notice } from '../../components/ui/Form'
 import { EmptyState } from '../../components/ui/Rows'
-import { hasOfficialWhatsApp } from '../../lib/activation'
+import { hasConnectedWhatsApp } from '../../lib/activation'
 import { formatPhoneBR } from '../../lib/format'
 import { initials, useSession } from '../../lib/session'
 import { buttonClass } from '../../lib/ui'
@@ -315,7 +315,7 @@ function ChatInbox({
   const waitingCount = conversations.filter((conversation) => conversation.status === 'waiting').length
   const selectedAssignee = selected?.assigned_user_id ?? ''
   const windowState = describeWindow(selected, now)
-  const hasOfficialChannel = hasOfficialWhatsApp(channels)
+  const hasOfficialChannel = hasConnectedWhatsApp(channels)
   const viewAll = !filters.assignedUserId && !filters.unassigned
 
   async function handleAssign(userId: string) {

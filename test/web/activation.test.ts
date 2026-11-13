@@ -1,8 +1,16 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { activationProgress, activationSteps, hasOfficialWhatsApp, type ActivationSnapshot } from '../../src/lib/activation'
+import { activationProgress, activationSteps, hasConnectedWhatsApp, hasOfficialWhatsApp, type ActivationSnapshot } from '../../src/lib/activation'
 
 const empty: ActivationSnapshot = { channels: [], activeUsers: 1, contacts: 0, welcomeMessage: null, aiAutonomousReply: false }
+
+test('o padrão QR só conclui a ativação quando o canal Evolution real está conectado', () => {
+  const channels = [{ provider: 'evolution', status: 'connected', metadata: { source: 'evolution-api' } }]
+  assert.equal(hasConnectedWhatsApp(channels), true)
+  assert.equal(activationSteps({ ...empty, channels })[0].done, true)
+  assert.equal(hasConnectedWhatsApp([{ ...channels[0], status: 'connecting' }]), false)
+  assert.equal(hasConnectedWhatsApp([{ provider: 'qrcode', status: 'connected' }]), false)
+})
 
 test('conta nova: os quatro itens pendentes, na ordem de valor', () => {
   const steps = activationSteps(empty)
@@ -11,7 +19,7 @@ test('conta nova: os quatro itens pendentes, na ordem de valor', () => {
   assert.deepEqual(activationProgress(steps), { done: 0, total: 4, complete: false })
 })
 
-test('QR Code (WhatsApp Web) não conta como WhatsApp conectado', () => {
+test('QR legado não é conexão oficial e exige confirmação separada de conexão real', () => {
   assert.equal(hasOfficialWhatsApp([{ provider: 'qrcode', status: 'connecting' }]), false)
   assert.equal(hasOfficialWhatsApp([{ provider: 'evolution', status: 'connected' }]), false)
   assert.equal(hasOfficialWhatsApp([{ provider: 'messageria', status: 'connected' }]), true)

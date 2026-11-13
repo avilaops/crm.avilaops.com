@@ -29,7 +29,7 @@ A rotação acontece trocando a chave no gestor de segredos e reiniciando a apli
 Todas são somente leitura. Não enviam mensagens nem alteram cadastros.
 O tenant é obtido da configuração da credencial, nunca dos argumentos de ferramenta.
 As páginas aceitam limit de 1 a 100 e offset de 0 a 100000.
-Mensagens da Evolution só aparecem depois de uma integração de ingestão separada.
+Mensagens de texto da Evolution aparecem após a sincronização do conector descrito em `docs/EVOLUTION.md`, sempre limitadas à empresa da credencial.
 
 ## Validação
 

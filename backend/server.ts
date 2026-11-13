@@ -1,6 +1,7 @@
 import { googleRedirectUri } from "./google-config.js";
 import { encerrarLangfuse } from "./langfuse.js";
 import { config } from "dotenv";
+import { evolutionConfig, registerEvolutionRoutes, sendEvolutionText } from "./evolution.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { createRequire } from "node:module";
 import fastifyMultipart from "@fastify/multipart";
@@ -493,9 +494,9 @@ async function upsertWhatsAppContact(tenantId: string, waId: string, name: strin
     `insert into contacts (tenant_id, name, phone, source, updated_at)
      values ($1, $2, $3, 'whatsapp', now())
      on conflict (tenant_id, phone)
-     do update set name = coalesce(nullif(excluded.name, ''), contacts.name), source = coalesce(contacts.source, 'whatsapp'), updated_at = now()
+     do update set name = case when $4::text is null then contacts.name else coalesce(nullif(excluded.name, ''), contacts.name) end, source = coalesce(contacts.source, 'whatsapp'), updated_at = now()
      returning id`,
-    [tenantId, name || waId, waId],
+    [tenantId, name || waId, waId, name?.trim() || null],
   );
   return result.rows[0].id;
 }
@@ -1359,28 +1360,12 @@ export async function buildApp(options: { background?: boolean; frontendHandler?
         await recordEvent(user.tenant_id, "message", "messageria.message_send_failed", { conversation_id: id, error: erro.message, codigo: erro.codigo }, user.id, null, requestId);
       }
     } else if (row.channel_provider === "qrcode" || row.channel_provider === "evolution") {
-      const evolutionApiUrl = process.env.EVOLUTION_API_URL ?? "http://localhost:8080";
-      const evolutionApiKey = process.env.EVOLUTION_API_KEY ?? "global-apikey";
       try {
-        const evoResponse = await fetch(`${evolutionApiUrl}/message/sendText/${row.channel_external_id}`, {
-          method: "POST",
-          headers: { apikey: evolutionApiKey, "Content-Type": "application/json" },
-          body: JSON.stringify({ number: row.contact_phone, options: { delay: 1200, presence: "composing" }, textMessage: { text: body.body } }),
-        });
-        const evoData = (await evoResponse.json()) as Record<string, unknown>;
-        if (evoResponse.ok) {
-          externalId = (evoData.key as { id?: string } | undefined)?.id ?? randomUUID();
-          responseMetadata = { evolution: evoData };
-        } else {
-          status = "sent"; // Fallback para desenvolvimento local
-          externalId = `qr_${randomUUID()}`;
-          responseMetadata = { simulated: true };
-        }
+        externalId = await sendEvolutionText(user.tenant_id, row.channel_external_id, row.contact_phone, body.body);
+        responseMetadata = { provider: "evolution" };
       } catch {
-        // Envio local registrado com sucesso quando a engine estiver inicializando
-        status = "sent";
-        externalId = `qr_${randomUUID()}`;
-        responseMetadata = { offline_queued: true };
+        status = "failed";
+        errorMessage = "A Evolution API não confirmou o envio. Verifique a conexão do WhatsApp Web.";
       }
     } else {
       const { integration } = await getMetaIntegration(user.tenant_id);
@@ -2053,38 +2038,21 @@ export async function buildApp(options: { background?: boolean; frontendHandler?
     return { received: true, processed };
   });
 
-  /**
-   * Conexao por QR Code (WhatsApp Web pela Evolution API): desativada.
-   *
-   * E um caminho que a Meta nao permite — vincular a conta a versoes nao
-   * oficiais "violates our Terms of Service" — e que pode custar o numero do
-   * cliente. Pior: quando a Evolution nao respondia, esta rota desenhava um QR
-   * falso, que nenhum celular conseguia ler, e deixava um canal parado em
-   * "connecting" para sempre (o unico registro de `channels` em producao era
-   * esse). A conexao oficial passa pela Messageria.
-   *
-   * Canais `qrcode`/`evolution` que ja existem continuam enviando — o roteamento
-   * do envio nao mudou; so nao se cria mais nenhum.
-   */
+  // Compatibilidade com clientes antigos: o pareamento usa a rota autenticada
+  // da Evolution, sem QR simulado nem escolha livre de instância pelo cliente.
   app.post("/api/channels/qrcode/instance", async (request, reply) => {
     const user = await requireAuth(request, reply);
     if (!user) return;
-    return reply.code(410).send({
-      error: "A conexao por QR Code foi desativada. Conecte o WhatsApp pela conexao oficial em Configuracoes > Canais > WhatsApp.",
-      code: "qrcode_disabled",
-    });
+    return reply.code(307).redirect('/api/integrations/evolution/connect');
   });
 
   app.get("/api/channels/qrcode/status/:instanceName", async (request, reply) => {
     const user = await requireAuth(request, reply);
     if (!user) return;
     const { instanceName } = z.object({ instanceName: z.string() }).parse(request.params);
-    const channel = await query<{ status: string; display_name: string; phone_number: string }>(
-      "select status, display_name, phone_number from channels where tenant_id = $1 and external_id = $2",
-      [user.tenant_id, instanceName],
-    );
-    const row = channel.rows[0];
-    return { status: row?.status ?? "connecting", display_name: row?.display_name ?? "WhatsApp Web", phone_number: row?.phone_number ?? "" };
+    const config = evolutionConfig(user.tenant_id);
+    if (!config || config.tenantId !== user.tenant_id || config.instanceName !== instanceName) return reply.code(404).send({ error: 'Instância não configurada para esta empresa.' });
+    return reply.code(307).redirect('/api/integrations/evolution/status');
   });
 
   app.get("/api/audit-logs", async (request, reply) => {
@@ -2493,6 +2461,7 @@ export async function buildApp(options: { background?: boolean; frontendHandler?
   registerMediaRoutes(app, { requireAuth, recordEvent });
   registerTeamRoutes(app, { requireAuth, recordEvent });
   registerSettingsRoutes(app, requireAuth, recordEvent);
+  registerEvolutionRoutes(app, { requireAuth, canManage, upsertContact: upsertWhatsAppContact, conversation: getOrCreateConversation, publish: publishRealtimeAsync, background: options.background !== false });
   registerAccountRoutes(app, {
     requireAuth,
     recordEvent,

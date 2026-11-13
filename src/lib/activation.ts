@@ -42,6 +42,10 @@ export function hasOfficialWhatsApp(channels: ActivationSnapshot['channels']) {
   )
 }
 
+export function hasConnectedWhatsApp(channels: ActivationSnapshot['channels']) {
+  return hasOfficialWhatsApp(channels) || channels.some((channel) => channel.provider === 'evolution' && channel.status === 'connected' && channel.metadata?.source === 'evolution-api')
+}
+
 export function activationSteps(snapshot: ActivationSnapshot): ActivationStep[] {
   const welcomeReady = Boolean(snapshot.welcomeMessage?.trim()) || snapshot.aiAutonomousReply
   return [
@@ -49,8 +53,8 @@ export function activationSteps(snapshot: ActivationSnapshot): ActivationStep[] 
       id: 'whatsapp',
       title: 'Conectar o WhatsApp',
       outcome: 'Receba e responda as mensagens dos seus clientes aqui.',
-      duration: 'cerca de 15 min',
-      done: hasOfficialWhatsApp(snapshot.channels),
+      duration: 'cerca de 2 min',
+      done: hasConnectedWhatsApp(snapshot.channels),
       action: { label: 'Conectar', page: 'whatsapp-channel' },
     },
     {

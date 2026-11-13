@@ -15,6 +15,7 @@ import { buttonClass } from '../../lib/ui'
 import { describeWhatsAppConnection, type WhatsAppConnectionView } from '../../lib/whatsappConnection'
 import type { Page } from '../../types'
 import { SettingsFrame } from './SettingsFrame'
+import { EvolutionCard } from '../../components/whatsapp/EvolutionCard'
 
 /**
  * A Coexistência — manter o número no app WhatsApp Business do celular e usar
@@ -27,11 +28,8 @@ const COEXISTENCIA_DISPONIVEL = false
 /**
  * Canais › WhatsApp.
  *
- * Um botão principal, uma explicação em três passos, o que muda no celular e
- * quanto custa — nessa ordem. O QR Code de "teste em dois passos" que ficava ao
- * lado do "+ Instalar" saiu: era uma conexão pelo WhatsApp Web, caminho que a
- * Meta não permite, e quando o serviço por trás não respondia ele desenhava um
- * QR falso. No celular, ainda pedia para escanear a própria tela.
+ * QR real da Evolution como caminho padrão, uma instância por empresa.
+ * A conexão oficial da Meta fica disponível nas opções alternativas.
  */
 export function WhatsAppChannelPage() {
   const { canManage } = useSession()
@@ -71,23 +69,25 @@ export function WhatsAppChannelPage() {
             coluna da direita e acompanha a rolagem. */}
         <div className="grid gap-5 @3xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] @3xl:items-start">
           <div className="grid min-w-0 gap-5 @3xl:col-start-1 @3xl:row-start-1">
+            <EvolutionCard />
+            <details className="rounded-xl border border-slate-200 bg-white p-4"><summary className="cursor-pointer text-sm font-semibold text-slate-700">Conexão oficial e configurações alternativas</summary><div className="mt-4 grid gap-4">
             {loading ? (
               <section className="rounded-xl border border-slate-200 bg-white p-5 text-sm text-slate-500">Consultando a conexão…</section>
             ) : (
               <StatusCard view={view} loadError={loadError} onConnect={() => setConnectOpen(true)} onRetry={reload} />
             )}
-            {view.unofficial.length > 0 && <UnofficialWarning view={view} />}
             <HowItWorks />
             <WhatChanges />
+            </div></details>
           </div>
 
           <aside className="min-w-0 @3xl:sticky @3xl:top-24 @3xl:col-start-2 @3xl:row-span-2 @3xl:row-start-1" aria-labelledby="preco-titulo">
-            <section className="grid gap-4 rounded-xl border border-slate-200 bg-white p-4 medium:p-5">
+            <details className="rounded-xl border border-slate-200 bg-white p-4 medium:p-5"><summary className="cursor-pointer text-sm font-semibold text-slate-700">Tarifas da API oficial da Meta</summary><section className="mt-4 grid gap-4">
               <h2 id="preco-titulo" className="text-base font-semibold text-slate-900">Quanto custa</h2>
               <PriceSummary tabela={tabela} />
               <PriceTable tabela={tabela} />
               <CostSimulator tabela={tabela} numeros={Math.max(1, view.numbers.filter((number) => !number.isTest).length)} />
-            </section>
+            </section></details>
           </aside>
 
           {canManage && (
@@ -193,26 +193,6 @@ function StatusCard({
         </div>
       )}
     </section>
-  )
-}
-
-function UnofficialWarning({ view }: { view: WhatsAppConnectionView }) {
-  return (
-    <Notice tone="warning">
-      <p className="font-semibold">Conexão por QR Code encontrada</p>
-      <p className="mt-1">
-        Ligar o WhatsApp pelo QR Code (WhatsApp Web) é um caminho que a Meta não permite e pode levar ao bloqueio do número. O CRM não cria
-        mais conexões assim; use a conexão oficial.
-      </p>
-      <ul className="mt-2 list-disc pl-5">
-        {view.unofficial.map((item) => (
-          <li key={item.id}>
-            {item.label}
-            {item.neverCompleted ? ' — a leitura do QR nunca foi concluída' : ''}
-          </li>
-        ))}
-      </ul>
-    </Notice>
   )
 }
 
